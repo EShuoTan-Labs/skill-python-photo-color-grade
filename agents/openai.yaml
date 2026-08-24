@@ -1,6 +1,6 @@
 interface:
   display_name: Python 照片调色
-  short_description: 先发掘场景光影潜力，再用 Python 调色
+  short_description: 发掘场景光影潜力，调用 Python 调色
   default_prompt: 使用 $python-photo-color-grade 分析照片的技术状态与光影潜力，调色
   icon_small: assets/icon.svg
   icon_large: assets/icon.svg
