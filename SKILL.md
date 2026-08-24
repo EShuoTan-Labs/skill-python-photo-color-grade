@@ -173,7 +173,9 @@ Then verify every predeclared style-signature criterion by inspecting the render
 
 ### 5. Deliver the results without exposing the internal recipe
 
-Return all processed final images first, labeled with their internal style letters and names. Add only a concise observable description of each look. State that the images were processed with non-generative Python and that content, composition, and dimensions were preserved.
+Display all processed final images first as directly visible image previews, labeled with their internal style letters and names. Use the host platform's native image-preview or media-display capability when available. When the host renders Markdown images from sandbox paths, embed each output with image syntax such as `![A3 自然通透](sandbox:/path/to/IMG_1234_A3_自然通透.jpg)`, not ordinary link syntax such as `[A3 自然通透](sandbox:/path/to/IMG_1234_A3_自然通透.jpg)`. Never deliver a final image only as a filename, filesystem path, or clickable text link. A separate download link may be added when useful, but it must supplement rather than replace the visible preview. Show one preview for every delivered variant and use a path or media artifact that the current host can actually render.
+
+Add only a concise observable description of each look. State that the images were processed with non-generative Python and that content, composition, and dimensions were preserved.
 
 Do not expose numerical settings, curve points, HSL values, color-grading values, mask definitions, the recipe JSON, or hidden planning by default. If the user explicitly asks what parameters were used, rerun reporting with `--show-parameters` or read the final recipe and report only the exact settings that produced the delivered file. Never report planned values that differ from the final render. Keep the explanation compact unless the user asks for details.
 
