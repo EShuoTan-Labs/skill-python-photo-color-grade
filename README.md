@@ -2,6 +2,8 @@
 
 一个面向 Agent 的**非生成式**图片调色skill。它先分析 JPEG 或 PNG 的亮度、动态范围、偏色和饱和度等指标，再让使用者选择审美方向与强度，随后通过确定性的 Python 脚本完成图像调色。
 
+[下载SKILL.zip](https://github.com/EShuoTan-Labs/skill-python-photo-color-grade/releases/latest/download/skill-python-photo-color-grade.zip)
+
 ## 特点
 
 - 首轮根据实际画面，提供 3–6 个差异鲜明的审美方向。
