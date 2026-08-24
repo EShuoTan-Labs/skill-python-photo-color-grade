@@ -1,0 +1,13 @@
+interface:
+  display_name: Python 照片调色
+  short_description: 先发掘场景光影潜力，再完成非生成式 Python 调色
+  default_prompt: 使用 $python-photo-color-grade 分析照片的技术状态与光影潜力，给我差异鲜明且包含最大创作性方向的选项；我选择后直接调色并验证风格是否真正命中。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
