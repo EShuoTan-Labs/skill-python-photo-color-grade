@@ -1,0 +1,89 @@
+name: Publish skill release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-skill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish skill.zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the triggering commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Build skill.zip
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_dir="${RUNNER_TEMP}/skill-build"
+          package_dir="${build_dir}/skill"
+          asset_path="${RUNNER_TEMP}/skill.zip"
+
+          rm -rf "${build_dir}"
+          mkdir -p "${package_dir}"
+
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='skill.zip' \
+            ./ "${package_dir}/"
+
+          printf '%s\n' "${GITHUB_SHA}" > "${package_dir}/.latest_commit"
+
+          (
+            cd "${package_dir}"
+            zip -q -r "${asset_path}" .
+          )
+
+          test "$(unzip -p "${asset_path}" .latest_commit)" = "${GITHUB_SHA}"
+          printf 'asset_path=%s\n' "${asset_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload GitHub Release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+        run: |
+          set -euo pipefail
+
+          release_tag="skill-${GITHUB_SHA}"
+          release_title="Skill build ${GITHUB_SHA::7}"
+          release_notes="Automated build from main commit ${GITHUB_SHA}."
+
+          if gh release view "${release_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload \
+              "${release_tag}" \
+              "${ASSET_PATH}" \
+              --clobber \
+              --repo "${GITHUB_REPOSITORY}"
+            gh release edit \
+              "${release_tag}" \
+              --title "${release_title}" \
+              --notes "${release_notes}" \
+              --latest \
+              --repo "${GITHUB_REPOSITORY}"
+          else
+            gh release create \
+              "${release_tag}" \
+              "${ASSET_PATH}" \
+              --target "${GITHUB_SHA}" \
+              --title "${release_title}" \
+              --notes "${release_notes}" \
+              --latest \
+              --repo "${GITHUB_REPOSITORY}"
+          fi

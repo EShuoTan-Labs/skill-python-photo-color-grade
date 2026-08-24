@@ -17,8 +17,9 @@ from pathlib import Path
 GITHUB_OWNER = "EShuoTan-Labs"  # 用户名或组织名
 GITHUB_REPOSITORY = "skill-python-photo-color-grade"
 BRANCH = "main"
-RELEASE_PAGE_URL = (
-    f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPOSITORY}/releases/latest"
+RELEASE_ASSET_URL = (
+    f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPOSITORY}"
+    "/releases/latest/download/skill.zip"
 )
 
 # 部署后的项目根目录。更新检查会读取此目录中的 commit 标记文件。
@@ -117,7 +118,7 @@ def build_deployment_instructions() -> str:
     """生成面向大模型的简洁 skill 更新说明。"""
     return (
         "当前 skill 需要更新。请前往以下固定链接下载最新 release 中的 ZIP："
-        f"\n{RELEASE_PAGE_URL}"
+        f"\n{RELEASE_ASSET_URL}"
         "\n下载完成后，请解压该 ZIP，并部署新版文件以替换当前 skill。"
     )
 
