@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   publish:
-    name: Build and publish skill.zip
+    name: Build and publish skill-python-photo-color-grade.zip
     runs-on: ubuntu-latest
 
     steps:
@@ -24,7 +24,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Build skill.zip
+      - name: Build skill-python-photo-color-grade.zip
         id: package
         shell: bash
         run: |
@@ -32,7 +32,7 @@ jobs:
 
           build_dir="${RUNNER_TEMP}/skill-build"
           package_dir="${build_dir}/skill"
-          asset_path="${RUNNER_TEMP}/skill.zip"
+          asset_path="${RUNNER_TEMP}/skill-python-photo-color-grade.zip"
 
           rm -rf "${build_dir}"
           mkdir -p "${package_dir}"
@@ -40,7 +40,7 @@ jobs:
           rsync -a \
             --exclude='.git/' \
             --exclude='.github/' \
-            --exclude='skill.zip' \
+            --exclude='skill-python-photo-color-grade.zip' \
             ./ "${package_dir}/"
 
           printf '%s\n' "${GITHUB_SHA}" > "${package_dir}/.latest_commit"

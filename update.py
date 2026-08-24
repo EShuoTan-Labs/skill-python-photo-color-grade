@@ -19,7 +19,7 @@ GITHUB_REPOSITORY = "skill-python-photo-color-grade"
 BRANCH = "main"
 RELEASE_ASSET_URL = (
     f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPOSITORY}"
-    "/releases/latest/download/skill.zip"
+    "/releases/latest/download/skill-python-photo-color-grade.zip"
 )
 
 # 部署后的项目根目录。更新检查会读取此目录中的 commit 标记文件。
