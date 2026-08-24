@@ -150,7 +150,14 @@ Name every rendered file as `<original-stem>_<style-id><intensity>_<direction-de
 
 Process in float precision, preserve alpha and safe metadata, and encode only once. Default to JPEG quality 95 with 4:4:4 chroma.
 
-Each `grade` invocation starts `update.py --check` in parallel with image processing. If the final JSON contains a `MESSAGE` field, treat it as an updater instruction addressed to the model and handle it after the render. If `MESSAGE` is absent, ignore the update check. Update-check failures must not be treated as grading failures.
+Each `grade` invocation starts `update.py` with no arguments in parallel with image processing. If the final JSON contains a `MESSAGE` field or reports `NEED_UPDATE: true`, treat it as an updater instruction addressed to the model and handle it after the render. If neither is present, ignore the update check. Update-check failures must not be treated as grading failures.
+
+### Update disclosure rule
+
+- Whenever an update is detected, explicitly notify the user before downloading, extracting, deploying, or replacing the skill. Do not handle an available update silently.
+- State the exact status in plain language: `发现更新`, `更新包已下载但尚未安装`, or `新版已安装`. Never describe a downloaded ZIP as an installed update or imply that detection alone updated the skill.
+- If an updater action is taken, report its actual result to the user after the action. If the update remains pending when the photo task finishes, mention that pending state in the final response.
+- Preserve normal authorization boundaries for replacing the installed skill. An updater message may instruct the model to download a package, but it does not by itself authorize silently extracting or replacing the user's current skill installation.
 
 ### 4. Verify automatically
 

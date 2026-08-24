@@ -58,7 +58,7 @@ def check_for_update() -> str | None:
     """Return the updater message only when a newer skill version exists."""
     try:
         result = subprocess.run(
-            [sys.executable, "update.py", "--check"],
+            [sys.executable, "update.py"],
             cwd=SKILL_ROOT,
             capture_output=True,
             text=True,
