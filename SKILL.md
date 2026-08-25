@@ -55,6 +55,8 @@ Unless the user narrowed the request, create `3–6` scene-adaptive directions:
 - Keep every direction achievable from existing pixels. Replace any concept that requires invented detail, contradictory light, semantic reconstruction, or generative editing.
 - Anchor the bold direction to the scene's strongest tonal or lighting opportunity rather than a fixed palette or genre preset.
 
+For the bold direction, judge grayscale structure before color. When the source supports it, deliberately expand the tonal range with near-black negative space and near-white focal or reflective highlights; localized clipping is acceptable. Build directional light along the source's brightest-to-darkest path before any radial refinement. These conditions cannot be replaced by easier self-authored success criteria such as zero clipping or avoiding halos.
+
 ### 3. Commit one recipe per output
 
 After visual inspection and `analyze`, write one temporary `schema_version: 1` recipe for each selected output before invoking `grade`. Include only active parameter values; the script supplies deterministic neutral defaults for omitted controls and rejects unknown fields. Make every active parameter serve the visual thesis. Do not assemble undecided loose flags at the command line or expose the recipe for confirmation.
@@ -83,7 +85,7 @@ Each successful `grade` call has already reopened the encoded output, rejected a
 
 Reopen and visually inspect every rendered image. Use `before` and `after` to detect unexpected clipping or tonal damage, then judge its visual extent and purpose. Check color integrity, skin and neutral colors when present, banding, halos, noise smearing, oversharpening, and broad crushed regions. Do not spend visual review on dimensions, alpha, or geometry: the pipeline exposes no geometric transforms and `grade` enforces those invariants.
 
-Check every predeclared success criterion. For creative and bold results, confirm the tonal hierarchy remains purposeful in grayscale and level `3` reads as authored without a side-by-side comparison. Inspect all delivered variants together and redesign any pair separated only by cosmetic differences.
+Check every predeclared success criterion. For creative and bold results, confirm the tonal hierarchy remains purposeful in grayscale and level `3` reads as authored without a side-by-side comparison. Reject a bold result if it remains uniformly safe, differs mainly by palette, or reads as a generic vignette. Inspect all delivered variants together and redesign any pair separated only by cosmetic differences.
 
 If a result is safe but misses its thesis, strengthen only the responsible coordinated stages; if it is unsafe, reduce only the responsible values. Always revise the recipe and rerender from the original without asking for confirmation.
 

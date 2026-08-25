@@ -3,9 +3,9 @@
 ## Contents
 
 - [Required internal recipe](#required-internal-recipe)
-- [Basic and tone controls](#basic-and-tone-controls)
 - [Intensity and creative range](#intensity-and-creative-range)
 - [Creative structure and controlled extremes](#creative-structure-and-controlled-extremes)
+- [Basic and tone controls](#basic-and-tone-controls)
 - [Point curve](#point-curve)
 - [HSL](#hsl)
 - [Color grading](#color-grading)
@@ -63,26 +63,9 @@ Omitted defaults are:
 - `detail.denoise: 0`, `detail.sharpen: 0`, and `detail.sharpen_radius: 1`;
 - `output.jpeg_quality: 95` and `output.png_compress: 6`.
 
-## Basic and tone controls
-
-| Recipe control | Meaning | Typical restrained range |
-|---|---|---:|
-| `temperature` | Warm (+) or cool (-) | `-0.15` to `+0.15` |
-| `tint` | Magenta (+) or green (-) | `-0.08` to `+0.08` |
-| `exposure` | Photographic exposure stops | `-0.50` to `+0.50` |
-| `highlights` | Bright-region tone | `-0.30` to `+0.30` |
-| `shadows` | Dark-region tone | `-0.30` to `+0.30` |
-| `whites` | White point region | `-0.20` to `+0.20` |
-| `blacks` | Black point region | `-0.20` to `+0.20` |
-| `contrast` | Midpoint contrast | `-0.20` to `+0.20` |
-| `vibrance` | Low-saturation-weighted color | `-0.20` to `+0.20` |
-| `saturation` | Global saturation | `-0.15` to `+0.15` |
-
-Values are normalized except exposure. Prefer vibrance over saturation for portraits.
-
 ## Intensity and creative range
 
-Treat the ranges above as restrained starting points, not a reason to make every style conservative. Scale the recipe by perceptual result and source latitude:
+Choose intensity from the intended perceptual result and source latitude before consulting any parameter baseline:
 
 | Level | Intended result | Typical strategy |
 |---|---|---|
@@ -91,7 +74,7 @@ Treat the ranges above as restrained starting points, not a reason to make every
 | `3` natural | Polished but faithful | Stronger correction without changing the scene's emotional key |
 | `3` creative/bold | Obvious authorship at first glance | Decisive curve, controlled deep blacks or brilliant highlights, clear dominant palette, color separation, and local light design where useful |
 
-For a level-3 creative or blockbuster choice, values may move beyond the restrained ranges when the source supports them and verification remains safe. Prefer coordinated moderate moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
+For a level-3 creative or bold choice, values may move beyond the natural/correction baselines below when the source supports them. Prefer coordinated moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
 
 For a bold recipe, complete `visual_intent` and its three to five observable success criteria before choosing parameters. After rendering, strengthen only the stages responsible for any unmet criterion. Never weaken a bold selection merely because it differs strongly from the source.
 
@@ -119,6 +102,25 @@ Run these anti-filter checks before accepting a level-3 creative render:
 - Does the result show a clear concept at first glance without the original beside it?
 
 Do not optimize for zero clipping. Controlled localized specular clipping, near-white reflective highlights, or deep near-black negative space can be intentional. Reject broad accidental clipping, posterization, hue breakage, lost facial/subject structure, or crushed texture across important regions. Judge the spatial location and visual purpose of extremes, not only their global ratio.
+
+## Basic and tone controls
+
+These are **natural/correction baselines only**, not implicit limits for a creative level-3 recipe.
+
+| Recipe control | Meaning | Natural/correction baseline |
+|---|---|---:|
+| `temperature` | Warm (+) or cool (-) | `-0.15` to `+0.15` |
+| `tint` | Magenta (+) or green (-) | `-0.08` to `+0.08` |
+| `exposure` | Photographic exposure stops | `-0.50` to `+0.50` |
+| `highlights` | Bright-region tone | `-0.30` to `+0.30` |
+| `shadows` | Dark-region tone | `-0.30` to `+0.30` |
+| `whites` | White point region | `-0.20` to `+0.20` |
+| `blacks` | Black point region | `-0.20` to `+0.20` |
+| `contrast` | Midpoint contrast | `-0.20` to `+0.20` |
+| `vibrance` | Low-saturation-weighted color | `-0.20` to `+0.20` |
+| `saturation` | Global saturation | `-0.15` to `+0.15` |
+
+Values are normalized except exposure. Prefer vibrance over saturation for portraits.
 
 ## Point curve
 
