@@ -54,7 +54,7 @@ Include every top-level key shown below. Within `parameters`, include only activ
 }
 ```
 
-The structured fields record observable decisions, not private chain-of-thought. Keep `visual_intent` concise and provide three to five observable success criteria.
+The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
 
 Omitted defaults are:
 
@@ -107,24 +107,26 @@ Do not optimize for zero clipping. Controlled localized specular clipping, near-
 
 These are **natural/correction baselines only**, not implicit limits for a creative level-3 recipe.
 
-| Recipe control | Meaning | Natural/correction baseline |
-|---|---|---:|
-| `temperature` | Warm (+) or cool (-) | `-0.15` to `+0.15` |
-| `tint` | Magenta (+) or green (-) | `-0.08` to `+0.08` |
-| `exposure` | Photographic exposure stops | `-0.50` to `+0.50` |
-| `highlights` | Bright-region tone | `-0.30` to `+0.30` |
-| `shadows` | Dark-region tone | `-0.30` to `+0.30` |
-| `whites` | White point region | `-0.20` to `+0.20` |
-| `blacks` | Black point region | `-0.20` to `+0.20` |
-| `contrast` | Midpoint contrast | `-0.20` to `+0.20` |
-| `vibrance` | Low-saturation-weighted color | `-0.20` to `+0.20` |
-| `saturation` | Global saturation | `-0.15` to `+0.15` |
+Accepted `basic` controls and ranges:
+
+| Recipe control | Meaning | Validator accepts | Natural/correction baseline |
+|---|---|---:|---:|
+| `temperature` | Warm (+) or cool (-) | `-1` to `+1` | `-0.15` to `+0.15` |
+| `tint` | Magenta (+) or green (-) | `-1` to `+1` | `-0.08` to `+0.08` |
+| `exposure` | Photographic exposure stops | `-4` to `+4` | `-0.50` to `+0.50` |
+| `highlights` | Bright-region tone | `-1` to `+1` | `-0.30` to `+0.30` |
+| `shadows` | Dark-region tone | `-1` to `+1` | `-0.30` to `+0.30` |
+| `whites` | White point region | `-1` to `+1` | `-0.20` to `+0.20` |
+| `blacks` | Black point region | `-1` to `+1` | `-0.20` to `+0.20` |
+| `contrast` | Midpoint contrast | `-1` to `+1` | `-0.20` to `+0.20` |
+| `vibrance` | Low-saturation-weighted color | `-1` to `+1` | `-0.20` to `+0.20` |
+| `saturation` | Global saturation | `-1` to `+1` | `-0.15` to `+0.15` |
 
 Values are normalized except exposure. Prefer vibrance over saturation for portraits.
 
 ## Point curve
 
-Use increasing `[x, y]` points from `x=0` to `x=1`; omit `curve` when inactive:
+Use an empty array or at least two increasing `[x, y]` points from `x=0` to `x=1`; omit `curve` when inactive:
 
 ```json
 "curve": [[0.0, 0.0], [0.25, 0.22], [0.5, 0.52], [0.75, 0.8], [1.0, 1.0]]
@@ -134,17 +136,17 @@ Keep x coordinates strictly increasing and all coordinates within `[0,1]`. Use a
 
 ## HSL
 
-Each included HSL color object supports `hue`, `saturation`, and `luminance`. Include only visibly relevant colors and controls; omitted values remain neutral.
+Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral.
 
 ```json
 "blue": {"hue": -8.0, "saturation": 0.12, "luminance": -0.05}
 ```
 
-Hue values are degrees; keep ordinary corrections around `-20` to `+20`. Saturation and luminance are normalized; keep them around `-0.25` to `+0.25`. Change only visibly relevant ranges.
+The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. Keep ordinary hue corrections around `-20` to `+20` and saturation/luminance around `-0.25` to `+0.25`. Change only visibly relevant ranges.
 
 ## Color grading
 
-Use hue degrees and normalized saturation for any active zone; omitted zones remain neutral:
+Accepted color-grading keys are `shadows`, `midtones`, `highlights`, `balance`, and `blending`. Each zone may contain `hue` and `saturation`; omitted zones or controls remain neutral.
 
 ```json
 "color_grading": {
@@ -156,23 +158,25 @@ Use hue degrees and normalized saturation for any active zone; omitted zones rem
 }
 ```
 
-Keep zone saturation subtle for natural work, commonly `0.02` to `0.12`. A level-3 creative look may use stronger separation when skin and neutral objects remain intentional. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
+Zone `hue` runs from `0` to `360` degrees and zone `saturation` from `0` to `1`. Keep saturation subtle for natural work, commonly `0.02` to `0.12`. A level-3 creative look may use stronger separation when skin and neutral objects remain intentional. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
 
 ## Local masks
 
-Embed the same mask-item schema in one of two recipe arrays:
+Embed the same mask-item schema in one of two recipe arrays. Each array item contains exactly one `mask` object and one `adjustments` object:
 
 - `local_corrections`: apply after global tone/curve and before vibrance, saturation, HSL, and color grading. Use for local exposure, white-balance, tonal, or corrective color work.
 - `local_adjustments`: apply after HSL and color grading. Use for final creative dodge, burn, or color accents.
 
-Do not place the same mask in both stages. Coordinates are normalized from `0` to `1`. Supported mask types:
+Place each mask in one stage according to its purpose. Every mask requires `type`, `opacity` from `0` to `1`, and boolean `invert`, plus exactly the fields for its type:
 
-- `luminance`: `min`, `max`, `feather`.
-- `color`: `hue` in degrees, `width`, `min_saturation`.
-- `linear`: `start: [x,y]`, `end: [x,y]`.
-- `radial`: `center: [x,y]`, `radius: [rx,ry]`, `feather`.
+| Mask type | Required type-specific fields |
+|---|---|
+| `luminance` | `min` and `max` from `0` to `1`, with `max > min`; `feather` from `0.0001` to `1` |
+| `color` | `hue` from `0` to `360`; `width` from `1` to `180`; `min_saturation` from `0` to `1` |
+| `linear` | distinct `start: [x,y]` and `end: [x,y]`, with every coordinate from `0` to `1` |
+| `radial` | `center: [x,y]` from `0` to `1`; `radius: [rx,ry]` from `0.0001` to `1`; `feather` from `0` to `0.99` |
 
-All masks accept `opacity` and `invert`. Local adjustments support exposure, temperature, tint, contrast, highlights, shadows, whites, blacks, saturation, vibrance, and curve.
+`adjustments` contains one or more basic-control names from above or `curve`. Local `exposure` accepts `-4` to `+4`; other numeric adjustments accept `-1` to `+1`; local `curve` follows the point-curve rules above.
 
 ```json
 "local_adjustments": [
@@ -199,12 +203,14 @@ For a directional concept, align linear masks with the observed bright-to-dark p
 
 ## Detail and output
 
-| Recipe control | Meaning | Guidance |
-|---|---|---|
-| `detail.denoise` | Early blend with deterministic 3×3 median result | `0` off; use `0.05–0.25` cautiously |
-| `detail.sharpen` | Unsharp amount | `0` off; use `0.10–0.40` cautiously |
-| `detail.sharpen_radius` | Blur radius used by unsharp | Commonly `0.6–1.2` |
-| `output.jpeg_quality` | JPEG quality | Use `95` by default |
-| `output.png_compress` | PNG compression level | Use `6` by default; lossless |
+Accepted `detail` and `output` controls and ranges:
+
+| Recipe control | Meaning | Validator accepts | Guidance |
+|---|---|---:|---|
+| `detail.denoise` | Early blend with deterministic 3×3 median result | `0` to `1` | `0` off; use `0.05–0.25` cautiously |
+| `detail.sharpen` | Unsharp amount | `0` to `2` | `0` off; use `0.10–0.40` cautiously |
+| `detail.sharpen_radius` | Blur radius used by unsharp | `0.1` to `5` | Commonly `0.6–1.2` |
+| `output.jpeg_quality` | JPEG quality | integer `1` to `100` | Use `95` by default |
+| `output.png_compress` | PNG compression level | integer `0` to `9` | Use `6` by default; lossless |
 
 The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested.
