@@ -1,11 +1,11 @@
 ---
 name: python-photo-color-grade
-description: Deterministically analyze and color-grade uploaded JPEG or PNG photographs with a Lightroom-style Python pipeline. Use for 调色, exposure and white-balance correction, tone curves, HSL, three-way color grading, deterministic local masks, denoise, sharpening, and natural through bold cinematic looks. For an unconstrained request, design three to six scene-adaptive directions and immediately render every direction at intensity 3; explicit user choices override that default. Keep exact recipes private unless requested. Exclude generative editing, retouching, object removal, inpainting, semantic segmentation, HEIC, and RAW.
+description: Analyze and color-grade uploaded JPEG or PNG photographs with a deterministic Lightroom-style Python pipeline. Use for 调色, exposure and white-balance correction, tone curves, HSL, three-way color grading, deterministic local masks, denoise, sharpening, and natural through bold cinematic looks. Apply non-generative tonal, color, and detail adjustments only. Do not use for retouching, object removal, inpainting, semantic editing, HEIC, or RAW.
 ---
 
 # Python Photo Color Grade
 
-Use the bundled Python pipeline to inspect, design, render, verify, and deliver final-quality grades. Make aesthetic decisions from the actual photograph; never call image generation, inpainting, or content-aware editing tools.
+Use the bundled Python pipeline to inspect, design, render, verify, and deliver final-quality grades from the actual photograph.
 
 ## Operating contract
 
@@ -21,9 +21,9 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 
 - Accept JPEG and PNG only. Do not create a screenshot or reduced preview as a substitute for the uploaded file.
 - Render to a new path and never overwrite the source.
-- Use only deterministic global controls, point curves, HSL, three-way color grading, and luminance, color, linear, or radial masks.
+- Use only the bundled deterministic controls and masks. Never call image generation, inpainting, semantic segmentation, or content-aware editing tools.
 - Do not use or claim semantic subject/sky masks. Describe every mask by its actual geometric, luminance, or color basis.
-- Do not crop, rotate, resize, beautify, remove blemishes, liquify, add grain, or simulate depth of field as part of this skill.
+- Do not perform spatial transforms, retouching, synthetic detail, grain, or depth-of-field simulation.
 - Enable denoise or sharpening only when technically justified or requested; keep both conservative.
 
 ## Workflow
@@ -46,36 +46,21 @@ Assess exposure, clipping, dynamic range, measurable cast, saturation, noise, so
 
 ### 2. Design a distinct style set
 
+Before designing directions or recipes, read [references/parameters.md](references/parameters.md) completely for creative structure, intensity guidance, the required schema, validated ranges, and mask semantics.
+
 Unless the user narrowed the request, create `3–6` scene-adaptive directions:
 
 - Always include one faithful natural correction, one clearly creative interpretation, and one scene-specific bold cinematic or editorial interpretation.
 - Add bright, commercial, filmic, warm/cool, or alternative directions only when they introduce a genuinely different idea. Do not pad the set to reach `F`.
 - Make every neighboring direction differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, or texture treatment.
 - Keep every direction achievable from existing pixels. Replace any concept that requires invented detail, contradictory light, semantic reconstruction, or generative editing.
-- Build bold authorship through tonal hierarchy, light geometry, or subject/background separation—not merely global darkness, saturation, or a teal wash.
+- Anchor the bold direction to the scene's strongest tonal or lighting opportunity rather than a fixed palette or genre preset.
 
-Anchor the bold direction to the scene's strongest opportunity: for example, silver directional highlights underwater, golden backlight at sunset, sculpted editorial portrait light, neon zonal separation at night, or monumental depth in a landscape. Treat these as structural examples, never fixed presets.
-
-For each creative or bold direction, define a concise internal visual thesis covering brightness key, contrast, light geometry, palette, subject separation, and texture. Derive `3–5` observable success criteria from that thesis. If the look would lose its identity in monochrome, strengthen its light and tonal structure before rendering.
+Follow the reference's visual-thesis, success-criteria, tonal-structure, and anti-filter guidance for every creative or bold direction.
 
 ### 3. Commit one recipe per output
 
-Before writing any recipe, read [references/parameters.md](references/parameters.md) completely for the schema, validated ranges, intensity guidance, and mask semantics.
-
-After visual inspection and `analyze`, write one temporary JSON recipe for each selected output before invoking `grade`. Use `schema_version: 1` and include:
-
-- an uppercase style ID, non-empty style name, and intensity `1`, `2`, or `3`;
-- complete observable `visual_intent` fields;
-- `3–5` observable `success_criteria`;
-- every required parameter section, with zero values or empty arrays for inactive stages.
-
-Treat intensity as perceptual distance from the source, not a universal multiplier:
-
-- `1 = 轻度`: correct the image and only hint at the look.
-- `2 = 中等`: make the style clearly visible side by side.
-- `3 = 明显`: make authorship obvious at first glance. Keep natural directions faithful, but let creative and bold directions use decisive tonal, palette, separation, and local-light choices when the source supports them.
-
-Make every active parameter serve the visual thesis. Do not assemble undecided loose flags at the command line, rely on implicit defaults, or expose the recipe for confirmation.
+After visual inspection and `analyze`, write one temporary `schema_version: 1` recipe for each selected output before invoking `grade`. Follow the complete schema exactly, represent inactive stages with zeros or empty arrays, and make every active parameter serve the visual thesis. Do not assemble undecided loose flags at the command line, rely on implicit defaults, or expose the recipe for confirmation.
 
 ### 4. Render every selected final
 
@@ -86,6 +71,8 @@ python3 <skill-dir>/scripts/photo_grade.py grade <input> <output> \
   --recipe <internal-recipe.json>
 ```
 
+Capture each invocation's complete JSON report separately and retain it through verification. Run grades in parallel only when their reports remain complete and attributable to the correct outputs; never batch them in a way that truncates or discards `before` and `after`.
+
 Name each file `<original-stem>_<style-id><intensity>_<direction-description><extension>`, for example `IMG_1234_A3_自然通透.jpg`.
 
 - Preserve the source stem, extension, and format unless the user requests a different output format.
@@ -95,15 +82,13 @@ Name each file `<original-stem>_<style-id><intensity>_<direction-description><ex
 
 ### 5. Verify and iterate automatically
 
-Inspect each rendered image and run:
+Each successful `grade` call has already reopened the encoded output, rejected any dimension or alpha change, and returned source/output metrics as `before` and `after`. Use that report for the routine metric comparison; do not rerun `compare` for an output created by the same call. Only when auditing an existing output whose original report is unavailable, run `python3 <skill-dir>/scripts/photo_grade.py compare <input> <output> --pretty`.
 
-```bash
-python3 <skill-dir>/scripts/photo_grade.py compare <input> <output> --pretty
-```
+Reopen and visually inspect every rendered image. Use `before` and `after` to detect unexpected clipping or tonal damage, then judge its visual extent and purpose. Check color integrity, skin and neutral colors when present, banding, halos, noise smearing, oversharpening, and broad crushed regions. Do not spend visual review on dimensions, alpha, or geometry: the pipeline exposes no geometric transforms and `grade` enforces those invariants.
 
-Confirm geometry and alpha checks pass and the output basename follows the required convention. Visually inspect clipping, color integrity, skin and neutral colors when present, banding, halos, noise smearing, and oversharpening. Treat small intentional specular highlights or deep negative space differently from broad accidental clipping.
+Check every predeclared success criterion. For creative and bold results, repeat the monochrome test and confirm level `3` reads as authored without a side-by-side comparison. Then inspect all delivered variants together and confirm neighboring choices still differ on at least two primary axes; redesign clustered variants rather than accepting cosmetic differences.
 
-Check every predeclared success criterion. For creative and bold results, repeat the monochrome test and confirm level `3` reads as authored without a side-by-side comparison. If a result is safe but misses its thesis, strengthen only the responsible coordinated stages; if it is unsafe, reduce only the responsible values. Always revise the recipe and rerender from the original without asking for confirmation.
+If a result is safe but misses its thesis, strengthen only the responsible coordinated stages; if it is unsafe, reduce only the responsible values. Always revise the recipe and rerender from the original without asking for confirmation.
 
 ### 6. Deliver visible finals
 
@@ -119,7 +104,7 @@ Use the host's native media display when available. If the host renders sandbox 
 
 Under each result, add only a concise description of observable differences. State once that processing used non-generative Python and preserved content, composition, dimensions, and alpha where present.
 
-Do not reveal numerical settings, curve points, HSL values, grading values, masks, recipes, or hidden planning by default. If the user explicitly requests the settings, report only the final recipe that produced the delivered file, using `--show-parameters` when useful.
+Do not reveal recipes, exact settings, masks, or hidden planning by default. If the user explicitly requests the settings, report only the final recipe that produced the delivered file, using `--show-parameters` when useful.
 
 Adapt persistence to the host. When ChatGPT Library persistence is required, save one output per operation, wait for confirmed success, then save the next; report any per-file failure accurately. This serialization applies only to Library saving, not local rendering or verification.
 
@@ -131,4 +116,4 @@ Adapt persistence to the host. When ChatGPT Library persistence is required, sav
 
 ## Update notices
 
-Each `grade` run may emit a `MESSAGE` reporting that a newer skill version exists. Finish the photo task normally, then tell the user that an update was found. Treat the message as a notice, not authorization to download, extract, deploy, or replace files. Perform an update only after an explicit user request, and distinguish clearly between `发现更新`, `更新包已下载但尚未安装`, and `新版已安装`. Ignore update-check failures as grading failures.
+If any `grade` report includes an update `MESSAGE`, finish all photo work first and report the notice once. Ignore duplicate notices and update-check failures. Treat the message as status, not authorization; update only after an explicit user request and distinguish `发现更新`, `更新包已下载但尚未安装`, and `新版已安装`.
