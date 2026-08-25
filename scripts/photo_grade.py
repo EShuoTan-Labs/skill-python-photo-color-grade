@@ -38,7 +38,7 @@ VISUAL_INTENT_FIELDS = {
     "subject_separation",
     "texture",
 }
-BASIC_FIELDS = {
+BASIC_FIELD_ORDER = (
     "temperature",
     "tint",
     "exposure",
@@ -49,7 +49,8 @@ BASIC_FIELDS = {
     "contrast",
     "vibrance",
     "saturation",
-}
+)
+BASIC_FIELDS = set(BASIC_FIELD_ORDER)
 LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve"}
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
@@ -62,6 +63,7 @@ def check_for_update() -> str | None:
             cwd=SKILL_ROOT,
             capture_output=True,
             text=True,
+            timeout=12,
         )
         if result.returncode != 0:
             return None
@@ -85,6 +87,12 @@ def require_exact_keys(value: dict[str, Any], expected: set[str], label: str) ->
     unknown = set(value) - expected
     if missing:
         raise ValueError(f"{label} is missing required keys: {sorted(missing)}")
+    if unknown:
+        raise ValueError(f"{label} has unsupported keys: {sorted(unknown)}")
+
+
+def reject_unknown_keys(value: dict[str, Any], allowed: set[str], label: str) -> None:
+    unknown = set(value) - allowed
     if unknown:
         raise ValueError(f"{label} has unsupported keys: {sorted(unknown)}")
 
@@ -219,56 +227,125 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
     if any(not isinstance(item, str) or not item.strip() for item in criteria):
         raise ValueError("Every recipe.success_criteria item must be a non-empty string.")
 
+    parameter_fields = {
+        "basic",
+        "curve",
+        "hsl",
+        "color_grading",
+        "local_corrections",
+        "local_adjustments",
+        "detail",
+        "output",
+    }
     parameters = require_object(recipe["parameters"], "recipe.parameters")
-    require_exact_keys(
-        parameters,
-        {"basic", "curve", "hsl", "color_grading", "local_corrections", "local_adjustments", "detail", "output"},
-        "recipe.parameters",
-    )
-    basic = require_object(parameters["basic"], "recipe.parameters.basic")
-    require_exact_keys(basic, BASIC_FIELDS, "recipe.parameters.basic")
+    reject_unknown_keys(parameters, parameter_fields, "recipe.parameters")
+    basic = require_object(parameters.get("basic", {}), "recipe.parameters.basic")
+    reject_unknown_keys(basic, BASIC_FIELDS, "recipe.parameters.basic")
     normalized: dict[str, Any] = {}
-    for name, value in basic.items():
+    expanded_basic: dict[str, float] = {}
+    for name in BASIC_FIELD_ORDER:
+        value = basic.get(name, 0.0)
         low, high = (-4.0, 4.0) if name == "exposure" else (-1.0, 1.0)
-        normalized[name] = require_number(value, f"recipe.parameters.basic.{name}", low, high)
-    normalized["curve"] = validate_curve_value(parameters["curve"], "recipe.parameters.curve")
+        validated = require_number(value, f"recipe.parameters.basic.{name}", low, high)
+        normalized[name] = validated
+        expanded_basic[name] = validated
+    curve = parameters.get("curve", [])
+    normalized["curve"] = validate_curve_value(curve, "recipe.parameters.curve")
 
-    hsl = require_object(parameters["hsl"], "recipe.parameters.hsl")
-    require_exact_keys(hsl, set(HUE_CENTERS), "recipe.parameters.hsl")
+    hsl = require_object(parameters.get("hsl", {}), "recipe.parameters.hsl")
+    reject_unknown_keys(hsl, set(HUE_CENTERS), "recipe.parameters.hsl")
+    expanded_hsl: dict[str, dict[str, float]] = {}
     for color in HUE_CENTERS:
-        color_values = require_object(hsl[color], f"recipe.parameters.hsl.{color}")
-        require_exact_keys(color_values, {"hue", "saturation", "luminance"}, f"recipe.parameters.hsl.{color}")
-        normalized[f"{color}_hue"] = require_number(color_values["hue"], f"recipe.parameters.hsl.{color}.hue", -90.0, 90.0)
-        normalized[f"{color}_sat"] = require_number(color_values["saturation"], f"recipe.parameters.hsl.{color}.saturation", -1.0, 1.5)
-        normalized[f"{color}_lum"] = require_number(color_values["luminance"], f"recipe.parameters.hsl.{color}.luminance", -1.0, 1.0)
+        color_values = require_object(hsl.get(color, {}), f"recipe.parameters.hsl.{color}")
+        color_fields = {"hue", "saturation", "luminance"}
+        reject_unknown_keys(color_values, color_fields, f"recipe.parameters.hsl.{color}")
+        hue = require_number(color_values.get("hue", 0.0), f"recipe.parameters.hsl.{color}.hue", -90.0, 90.0)
+        saturation = require_number(
+            color_values.get("saturation", 0.0),
+            f"recipe.parameters.hsl.{color}.saturation",
+            -1.0,
+            1.5,
+        )
+        luminance = require_number(
+            color_values.get("luminance", 0.0),
+            f"recipe.parameters.hsl.{color}.luminance",
+            -1.0,
+            1.0,
+        )
+        normalized[f"{color}_hue"] = hue
+        normalized[f"{color}_sat"] = saturation
+        normalized[f"{color}_lum"] = luminance
+        expanded_hsl[color] = {"hue": hue, "saturation": saturation, "luminance": luminance}
 
-    grading = require_object(parameters["color_grading"], "recipe.parameters.color_grading")
-    require_exact_keys(grading, {"shadows", "midtones", "highlights", "balance", "blending"}, "recipe.parameters.color_grading")
+    grading_fields = {"shadows", "midtones", "highlights", "balance", "blending"}
+    grading = require_object(parameters.get("color_grading", {}), "recipe.parameters.color_grading")
+    reject_unknown_keys(grading, grading_fields, "recipe.parameters.color_grading")
+    expanded_grading: dict[str, Any] = {}
     for zone in ("shadows", "midtones", "highlights"):
-        zone_values = require_object(grading[zone], f"recipe.parameters.color_grading.{zone}")
-        require_exact_keys(zone_values, {"hue", "saturation"}, f"recipe.parameters.color_grading.{zone}")
-        normalized[f"grade_{zone}_hue"] = require_number(zone_values["hue"], f"recipe.parameters.color_grading.{zone}.hue", 0.0, 360.0)
-        normalized[f"grade_{zone}_sat"] = require_number(zone_values["saturation"], f"recipe.parameters.color_grading.{zone}.saturation", 0.0, 1.0)
-    normalized["grading_balance"] = require_number(grading["balance"], "recipe.parameters.color_grading.balance", -1.0, 1.0)
-    normalized["grading_blending"] = require_number(grading["blending"], "recipe.parameters.color_grading.blending", 0.0, 1.0)
-    normalized["local_corrections"] = validate_local_adjustments(parameters["local_corrections"], "recipe.parameters.local_corrections")
-    normalized["local_adjustments"] = validate_local_adjustments(parameters["local_adjustments"], "recipe.parameters.local_adjustments")
+        zone_values = require_object(grading.get(zone, {}), f"recipe.parameters.color_grading.{zone}")
+        reject_unknown_keys(zone_values, {"hue", "saturation"}, f"recipe.parameters.color_grading.{zone}")
+        hue = require_number(zone_values.get("hue", 0.0), f"recipe.parameters.color_grading.{zone}.hue", 0.0, 360.0)
+        saturation = require_number(
+            zone_values.get("saturation", 0.0),
+            f"recipe.parameters.color_grading.{zone}.saturation",
+            0.0,
+            1.0,
+        )
+        normalized[f"grade_{zone}_hue"] = hue
+        normalized[f"grade_{zone}_sat"] = saturation
+        expanded_grading[zone] = {"hue": hue, "saturation": saturation}
+    balance = require_number(grading.get("balance", 0.0), "recipe.parameters.color_grading.balance", -1.0, 1.0)
+    blending = require_number(grading.get("blending", 0.5), "recipe.parameters.color_grading.blending", 0.0, 1.0)
+    normalized["grading_balance"] = balance
+    normalized["grading_blending"] = blending
+    expanded_grading["balance"] = balance
+    expanded_grading["blending"] = blending
+    local_corrections = parameters.get("local_corrections", [])
+    local_adjustments = parameters.get("local_adjustments", [])
+    normalized["local_corrections"] = validate_local_adjustments(local_corrections, "recipe.parameters.local_corrections")
+    normalized["local_adjustments"] = validate_local_adjustments(local_adjustments, "recipe.parameters.local_adjustments")
 
-    detail = require_object(parameters["detail"], "recipe.parameters.detail")
-    require_exact_keys(detail, {"denoise", "sharpen", "sharpen_radius"}, "recipe.parameters.detail")
-    normalized["denoise"] = require_number(detail["denoise"], "recipe.parameters.detail.denoise", 0.0, 1.0)
-    normalized["sharpen"] = require_number(detail["sharpen"], "recipe.parameters.detail.sharpen", 0.0, 2.0)
-    normalized["sharpen_radius"] = require_number(detail["sharpen_radius"], "recipe.parameters.detail.sharpen_radius", 0.1, 5.0)
+    detail = require_object(parameters.get("detail", {}), "recipe.parameters.detail")
+    reject_unknown_keys(detail, {"denoise", "sharpen", "sharpen_radius"}, "recipe.parameters.detail")
+    denoise = require_number(detail.get("denoise", 0.0), "recipe.parameters.detail.denoise", 0.0, 1.0)
+    sharpen = require_number(detail.get("sharpen", 0.0), "recipe.parameters.detail.sharpen", 0.0, 2.0)
+    sharpen_radius = require_number(
+        detail.get("sharpen_radius", 1.0),
+        "recipe.parameters.detail.sharpen_radius",
+        0.1,
+        5.0,
+    )
+    normalized["denoise"] = denoise
+    normalized["sharpen"] = sharpen
+    normalized["sharpen_radius"] = sharpen_radius
 
-    output = require_object(parameters["output"], "recipe.parameters.output")
-    require_exact_keys(output, {"jpeg_quality", "png_compress"}, "recipe.parameters.output")
-    jpeg_quality = require_number(output["jpeg_quality"], "recipe.parameters.output.jpeg_quality", 1, 100)
-    png_compress = require_number(output["png_compress"], "recipe.parameters.output.png_compress", 0, 9)
+    output = require_object(parameters.get("output", {}), "recipe.parameters.output")
+    reject_unknown_keys(output, {"jpeg_quality", "png_compress"}, "recipe.parameters.output")
+    jpeg_quality = require_number(output.get("jpeg_quality", 95), "recipe.parameters.output.jpeg_quality", 1, 100)
+    png_compress = require_number(output.get("png_compress", 6), "recipe.parameters.output.png_compress", 0, 9)
     if not jpeg_quality.is_integer() or not png_compress.is_integer():
         raise ValueError("Output quality and compression values must be integers.")
     normalized["jpeg_quality"] = int(jpeg_quality)
     normalized["png_compress"] = int(png_compress)
-    return argparse.Namespace(**normalized), recipe
+    expanded_recipe = dict(recipe)
+    expanded_recipe["parameters"] = {
+        "basic": expanded_basic,
+        "curve": curve,
+        "hsl": expanded_hsl,
+        "color_grading": expanded_grading,
+        "local_corrections": local_corrections,
+        "local_adjustments": local_adjustments,
+        "detail": {
+            "denoise": denoise,
+            "sharpen": sharpen,
+            "sharpen_radius": sharpen_radius,
+        },
+        "output": {
+            "jpeg_quality": int(jpeg_quality),
+            "png_compress": int(png_compress),
+        },
+    }
+    return argparse.Namespace(**normalized), expanded_recipe
 
 
 def require_supported(path: Path) -> None:
@@ -904,6 +981,11 @@ def add_grade_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Include final recipe parameters in the report only when explicitly requested",
     )
+    parser.add_argument(
+        "--skip-update-check",
+        action="store_true",
+        help="Skip the best-effort update check when another grade in this batch already performs it",
+    )
     parser.add_argument("--pretty", action="store_true")
 
 
@@ -927,7 +1009,7 @@ def main() -> int:
     args = parser.parse_args()
     update_future: Future[str | None] | None = None
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="skill-update") as executor:
-        if args.command == "grade":
+        if args.command == "grade" and not args.skip_update_check:
             update_future = executor.submit(check_for_update)
         try:
             if args.command == "analyze":

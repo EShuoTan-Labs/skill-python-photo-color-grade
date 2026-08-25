@@ -15,7 +15,6 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
 - Deliver full-quality final variants, not samples, proofs, contact sheets, or reduced-quality previews.
 - Treat only a missing input, unsupported format, or irreconcilable instruction as a blocker.
-- Keep recipes, numerical settings, mask definitions, and internal visual planning private unless the user explicitly asks for them.
 
 ## Scope and boundaries
 
@@ -51,27 +50,25 @@ Before designing directions or recipes, read [references/parameters.md](referenc
 Unless the user narrowed the request, create `3–6` scene-adaptive directions:
 
 - Always include one faithful natural correction, one clearly creative interpretation, and one scene-specific bold cinematic or editorial interpretation.
-- Add bright, commercial, filmic, warm/cool, or alternative directions only when they introduce a genuinely different idea. Do not pad the set to reach `F`.
-- Make every neighboring direction differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, or texture treatment.
+- Add bright, commercial, filmic, warm/cool, or alternative directions only when they introduce a genuinely different idea; stop when another direction would be cosmetic.
+- Make each direction materially distinct from the rest on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, or texture treatment.
 - Keep every direction achievable from existing pixels. Replace any concept that requires invented detail, contradictory light, semantic reconstruction, or generative editing.
 - Anchor the bold direction to the scene's strongest tonal or lighting opportunity rather than a fixed palette or genre preset.
 
-Follow the reference's visual-thesis, success-criteria, tonal-structure, and anti-filter guidance for every creative or bold direction.
-
 ### 3. Commit one recipe per output
 
-After visual inspection and `analyze`, write one temporary `schema_version: 1` recipe for each selected output before invoking `grade`. Follow the complete schema exactly, represent inactive stages with zeros or empty arrays, and make every active parameter serve the visual thesis. Do not assemble undecided loose flags at the command line, rely on implicit defaults, or expose the recipe for confirmation.
+After visual inspection and `analyze`, write one temporary `schema_version: 1` recipe for each selected output before invoking `grade`. Include only active parameter values; the script supplies deterministic neutral defaults for omitted controls and rejects unknown fields. Make every active parameter serve the visual thesis. Do not assemble undecided loose flags at the command line or expose the recipe for confirmation.
 
 ### 4. Render every selected final
 
-Render each recipe once from the original:
+Render each recipe from the original:
 
 ```bash
 python3 <skill-dir>/scripts/photo_grade.py grade <input> <output> \
   --recipe <internal-recipe.json>
 ```
 
-Capture each invocation's complete JSON report separately and retain it through verification. Run grades in parallel only when their reports remain complete and attributable to the correct outputs; never batch them in a way that truncates or discards `before` and `after`.
+Let exactly one `grade` invocation perform the automatic update check; add `--skip-update-check` to every other invocation, including rerenders. Capture each complete JSON report separately and retain it through verification. Run grades in parallel only when their reports remain attributable to the correct outputs and retain `before` and `after`.
 
 Name each file `<original-stem>_<style-id><intensity>_<direction-description><extension>`, for example `IMG_1234_A3_自然通透.jpg`.
 
@@ -86,7 +83,7 @@ Each successful `grade` call has already reopened the encoded output, rejected a
 
 Reopen and visually inspect every rendered image. Use `before` and `after` to detect unexpected clipping or tonal damage, then judge its visual extent and purpose. Check color integrity, skin and neutral colors when present, banding, halos, noise smearing, oversharpening, and broad crushed regions. Do not spend visual review on dimensions, alpha, or geometry: the pipeline exposes no geometric transforms and `grade` enforces those invariants.
 
-Check every predeclared success criterion. For creative and bold results, repeat the monochrome test and confirm level `3` reads as authored without a side-by-side comparison. Then inspect all delivered variants together and confirm neighboring choices still differ on at least two primary axes; redesign clustered variants rather than accepting cosmetic differences.
+Check every predeclared success criterion. For creative and bold results, confirm the tonal hierarchy remains purposeful in grayscale and level `3` reads as authored without a side-by-side comparison. Inspect all delivered variants together and redesign any pair separated only by cosmetic differences.
 
 If a result is safe but misses its thesis, strengthen only the responsible coordinated stages; if it is unsafe, reduce only the responsible values. Always revise the recipe and rerender from the original without asking for confirmation.
 
@@ -102,7 +99,7 @@ Show every final image before extended explanation. Give each variant its own he
 
 Use the host's native media display when available. If the host renders sandbox Markdown images, use image syntax (`![label](sandbox:/path)`), not ordinary link syntax. Never deliver a final only as a filename, filesystem path, or clickable text link. A download link may supplement the visible preview.
 
-Under each result, add only a concise description of observable differences. State once that processing used non-generative Python and preserved content, composition, dimensions, and alpha where present.
+Under each result, add only a concise description of observable differences.
 
 Do not reveal recipes, exact settings, masks, or hidden planning by default. If the user explicitly requests the settings, report only the final recipe that produced the delivered file, using `--show-parameters` when useful.
 
@@ -116,4 +113,4 @@ Adapt persistence to the host. When ChatGPT Library persistence is required, sav
 
 ## Update notices
 
-If any `grade` report includes an update `MESSAGE`, finish all photo work first and report the notice once. Ignore duplicate notices and update-check failures. Treat the message as status, not authorization; update only after an explicit user request and distinguish `发现更新`, `更新包已下载但尚未安装`, and `新版已安装`.
+If the checked `grade` report includes an update `MESSAGE`, finish all photo work first and report the notice once. Ignore update-check failures. Treat the message as status, not authorization; update only after an explicit user request and distinguish `发现更新`, `更新包已下载但尚未安装`, and `新版已安装`.

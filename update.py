@@ -26,7 +26,7 @@ RELEASE_ASSET_URL = (
 PROJECT_ROOT = Path(__file__).resolve().parent
 COMMIT_HASH_FILENAME = ".latest_commit"
 COMMIT_RECORD_PATH = PROJECT_ROOT / COMMIT_HASH_FILENAME
-TIMEOUT_SECONDS = 30
+TIMEOUT_SECONDS = 8
 
 
 class UpdateError(RuntimeError):
