@@ -14,7 +14,7 @@
 
 ## Required internal recipe
 
-Use every key shown below for each `schema_version: 1` recipe. Use zeros and empty arrays for inactive stages; never omit a section or rely on implicit defaults.
+Include every top-level key shown below. Within `parameters`, include only active sections and controls. The script expands omitted controls to deterministic neutral defaults and rejects unknown fields.
 
 ```json
 {
@@ -39,51 +39,29 @@ Use every key shown below for each `schema_version: 1` recipe. Use zeros and emp
   ],
   "parameters": {
     "basic": {
-      "temperature": 0.0,
-      "tint": 0.0,
-      "exposure": 0.0,
-      "highlights": 0.0,
-      "shadows": 0.0,
-      "whites": 0.0,
-      "blacks": 0.0,
-      "contrast": 0.0,
-      "vibrance": 0.0,
-      "saturation": 0.0
+      "exposure": 0.15,
+      "highlights": -0.1,
+      "vibrance": 0.06
     },
-    "curve": [],
+    "curve": [[0.0, 0.0], [0.5, 0.52], [1.0, 1.0]],
     "hsl": {
-      "red": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "orange": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "yellow": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "green": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "aqua": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "blue": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "purple": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0},
-      "magenta": {"hue": 0.0, "saturation": 0.0, "luminance": 0.0}
+      "blue": {"saturation": 0.08, "luminance": -0.03}
     },
-    "color_grading": {
-      "shadows": {"hue": 0.0, "saturation": 0.0},
-      "midtones": {"hue": 0.0, "saturation": 0.0},
-      "highlights": {"hue": 0.0, "saturation": 0.0},
-      "balance": 0.0,
-      "blending": 0.5
-    },
-    "local_corrections": [],
-    "local_adjustments": [],
     "detail": {
-      "denoise": 0.0,
-      "sharpen": 0.0,
-      "sharpen_radius": 1.0
-    },
-    "output": {
-      "jpeg_quality": 95,
-      "png_compress": 6
+      "sharpen": 0.15
     }
   }
 }
 ```
 
 The structured fields record observable decisions, not private chain-of-thought. Keep `visual_intent` concise and provide three to five observable success criteria.
+
+Omitted defaults are:
+
+- `0` for basic, HSL, and color-grading controls, except `color_grading.blending: 0.5`;
+- `[]` for the point curve and both local-mask arrays;
+- `detail.denoise: 0`, `detail.sharpen: 0`, and `detail.sharpen_radius: 1`;
+- `output.jpeg_quality: 95` and `output.png_compress: 6`.
 
 ## Basic and tone controls
 
@@ -115,16 +93,7 @@ Treat the ranges above as restrained starting points, not a reason to make every
 
 For a level-3 creative or blockbuster choice, values may move beyond the restrained ranges when the source supports them and verification remains safe. Prefer coordinated moderate moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
 
-Before rendering a bold recipe, define its visual thesis in one sentence, covering:
-
-1. brightness key and contrast shape;
-2. directional or zonal light geometry;
-3. dominant and supporting colors;
-4. subject/background separation method;
-5. highlight and black-point treatment;
-6. whether texture is crisp, soft, or filmic.
-
-Translate the thesis into three to five observable criteria before choosing parameters. After rendering, confirm each criterion without requiring the user to compare the original. If one is missing, strengthen the relevant coordinated stages and rerender. Never weaken a bold selection merely because it differs strongly from the source.
+For a bold recipe, complete `visual_intent` and its three to five observable success criteria before choosing parameters. After rendering, strengthen only the stages responsible for any unmet criterion. Never weaken a bold selection merely because it differs strongly from the source.
 
 ## Creative structure and controlled extremes
 
@@ -153,7 +122,7 @@ Do not optimize for zero clipping. Controlled localized specular clipping, near-
 
 ## Point curve
 
-Use increasing `[x, y]` points from `x=0` to `x=1`; use `[]` when inactive:
+Use increasing `[x, y]` points from `x=0` to `x=1`; omit `curve` when inactive:
 
 ```json
 "curve": [[0.0, 0.0], [0.25, 0.22], [0.5, 0.52], [0.75, 0.8], [1.0, 1.0]]
@@ -163,7 +132,7 @@ Keep x coordinates strictly increasing and all coordinates within `[0,1]`. Use a
 
 ## HSL
 
-Each required HSL color object supports `hue`, `saturation`, and `luminance`. Change only visibly relevant values and leave the rest at zero.
+Each included HSL color object supports `hue`, `saturation`, and `luminance`. Include only visibly relevant colors and controls; omitted values remain neutral.
 
 ```json
 "blue": {"hue": -8.0, "saturation": 0.12, "luminance": -0.05}
@@ -173,7 +142,7 @@ Hue values are degrees; keep ordinary corrections around `-20` to `+20`. Saturat
 
 ## Color grading
 
-Use hue degrees and normalized saturation for all three required zones:
+Use hue degrees and normalized saturation for any active zone; omitted zones remain neutral:
 
 ```json
 "color_grading": {
@@ -221,8 +190,6 @@ All masks accept `opacity` and `invert`. Local adjustments support exposure, tem
   }
 ]
 ```
-
-Describe masks by their real basis. A radial mask placed over a person is still a radial mask, not semantic subject selection.
 
 Use masks to implement photographic light design rather than semantic editing. For bold work, combine only the masks the scene needs, such as a broad linear burn to deepen an edge, a radial dodge placed over the existing focal region, or a luminance mask to control brilliant highlights. Keep feathering broad enough to avoid visible transitions. Do not add light that contradicts the source direction.
 
