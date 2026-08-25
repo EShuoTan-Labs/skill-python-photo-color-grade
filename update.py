@@ -114,14 +114,11 @@ def create_source() -> UpdateSource:
     return GitHubSource(GITHUB_OWNER, GITHUB_REPOSITORY, BRANCH)
 
 
-def build_deployment_instructions() -> str:
-    """生成面向大模型的简洁 skill 更新说明。"""
+def build_update_message() -> str:
+    """生成简洁的 skill 更新状态通知。"""
     return (
-        "当前 skill 有更新版本。不影响当前功能，但必须明确向用户请求更新意见。"
-        "\n如果确认更新，请前往以下固定链接下载最新 release 中的 ZIP："
+        "发现 skill 更新。请先完成当前任务并告知用户；仅在用户明确要求更新后使用以下地址："
         f"\n{RELEASE_ASSET_URL}"
-        "\n下载完成后，请解压该 ZIP，并部署新版文件以替换当前 skill。成功部署后清理旧版的备份以及 ZIP 文件。"
-        "\n哪怕旧版备份因安全限制未能自动删除，也必须压缩或彻底删除旧版文件，以免再次被加载。"
     )
 
 
@@ -158,7 +155,7 @@ def main() -> int:
                 True,
                 current_commit,
                 latest_commit,
-                build_deployment_instructions(),
+                build_update_message(),
             )
         else:
             print_result(

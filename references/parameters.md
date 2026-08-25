@@ -14,7 +14,7 @@
 
 ## Required internal recipe
 
-Write one private JSON recipe per output after image inspection and `analyze`, and before calling `grade`. The script requires every key shown below. Use zeros and empty arrays for inactive stages; never omit a section or rely on implicit defaults.
+Use every key shown below for each `schema_version: 1` recipe. Use zeros and empty arrays for inactive stages; never omit a section or rely on implicit defaults.
 
 ```json
 {
@@ -83,15 +83,7 @@ Write one private JSON recipe per output after image inspection and `analyze`, a
 }
 ```
 
-The structured fields record decisions, not private chain-of-thought. Keep `visual_intent` concise and observable. Provide three to five success criteria. Keep the recipe in temporary workspace storage and do not deliver it unless the user explicitly asks for settings.
-
-Render only through the recipe interface:
-
-```bash
-python3 scripts/photo_grade.py grade input.jpg output.jpg --recipe recipe.json
-```
-
-The default report omits parameter values. Use `--show-parameters` only after an explicit user request for the actual settings.
+The structured fields record observable decisions, not private chain-of-thought. Keep `visual_intent` concise and provide three to five observable success criteria.
 
 ## Basic and tone controls
 
@@ -246,4 +238,4 @@ For a directional concept, align linear masks with the observed bright-to-dark p
 | `output.jpeg_quality` | JPEG quality | Use `95` by default |
 | `output.png_compress` | PNG compression level | Use `6` by default; lossless |
 
-Apply denoise before white balance, exposure, and contrast so later tonal work does not amplify noise first. Apply sharpening after all global and local grading. Keep both off unless technically justified or explicitly requested. Preserve the original ICC/EXIF when safe, retain alpha for PNG, and never overwrite the original.
+The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested.
