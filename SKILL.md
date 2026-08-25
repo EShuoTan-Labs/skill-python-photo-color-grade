@@ -95,9 +95,11 @@ Show every final image before extended explanation. Give each variant its own he
 ### A3 自然通透
 
 ![A3 自然通透](sandbox:/absolute/path/IMG_1234_A3_自然通透.jpg)
+
+[A3 自然通透](sandbox:/absolute/path/IMG_1234_A3_自然通透.jpg)
 ```
 
-Use the host's native media display when available. If the host renders sandbox Markdown images, use image syntax (`![label](sandbox:/path)`), not ordinary link syntax. Never deliver a final only as a filename, filesystem path, or clickable text link. A download link may supplement the visible preview.
+Use the host's native media display when available. If the host renders sandbox Markdown images, provide both image syntax (`![label](sandbox:/path)`) for the visible preview and ordinary link syntax (`[label](sandbox:/path)`) for opening or downloading the same file. Keep the label and target path identical in both forms. Never deliver a final only as a filename, filesystem path, clickable text link, or preview without its matching ordinary link.
 
 Under each result, add only a concise description of observable differences.
 
