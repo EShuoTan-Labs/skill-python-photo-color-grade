@@ -62,7 +62,6 @@ Treat these as composition principles, not permanent presets. Replace incompatib
 ## Boundaries
 
 - Accept JPEG and PNG only; do not substitute screenshots for originals.
-- Preserve content, faces, skin texture, objects, text, edges, geometry, composition, dimensions, aspect ratio, and alpha.
 - Never overwrite the original.
 - Use only deterministic global adjustments, point curves, HSL, three-way color grading, and luminance/color/linear/radial masks.
 - Do not use subject/sky segmentation models or claim that a mask understands semantic content.
