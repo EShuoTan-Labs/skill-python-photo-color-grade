@@ -13,13 +13,14 @@ Apply these in order:
 
 1. Preserve the source: work non-generatively, render from the original, and never overwrite it.
 2. Honor explicit user constraints on style, count, intensity, and format.
-3. Make every delivered direction coherent, useful, and materially distinct.
-4. Inspect the encoded full-resolution outputs and iterate before delivery.
+3. Exhaust the source's strongest scene-specific opportunities in creative and bold work; fidelity is not a reason to remain timid.
+4. Make every delivered direction coherent, useful, and materially distinct.
+5. Inspect the encoded full-resolution outputs and iterate before delivery.
 
 ## Defaults and blockers
 
 - Start the first pass without asking the user to choose a style or understand controls.
-- For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Always include one faithful natural correction, one clearly creative scene-adaptive interpretation, and one bold editorial or cinematic interpretation. If a bold treatment would fight the source, replace it with a different strong but scene-faithful concept. Add further directions only when each introduces a genuinely different and useful idea.
+- For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Always include one faithful natural correction, one clearly creative scene-adaptive interpretation, and at least one bold editorial or cinematic interpretation. One bold result is a minimum, not a quota: when several bold concepts exploit different high-potential readings of the scene, render more than one and let them occupy multiple slots. Add directions only when each introduces a genuinely different and useful idea.
 - For a singular correction such as “提亮一点” or “修正白平衡,” render one faithful result unless the user requests alternatives.
 - Let explicit constraints replace only conflicting defaults. For example, “只要自然版” produces one natural result, “不要胶片” excludes film looks, and a named style or intensity narrows the set.
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
@@ -51,7 +52,10 @@ Assess exposure, clipping, usable dynamic range, white balance, saturation, nois
 
 - Do not infer illumination direction from a bright-to-dark gradient alone; subject reflectance, clothing, sky, and background can create the same pattern. Prefer consistent cues such as cast shadows, specular highlights, shading across one surface, window or sun position, and facial modeling. If direction remains ambiguous, use broad tonal zoning instead of directional relighting.
 - Do not neutralize an intentional warm, cool, or colorful scene from global RGB averages. Base white-balance correction on credible neutral surfaces or repeated spatial evidence when available. Use skin only as a plausibility constraint, never as a neutral reference.
-- Identify highlight latitude, important texture, negative space, and separation available through luminance, hue, saturation, or temperature. Define the strongest coherent transformation the source can support without sacrificing important subject structure.
+- Mine the scene before naming styles. Identify the primary subject, secondary subject and their relationship; existing light events such as reflections, caustics, backlight, haze, or silhouettes; foreground-to-background depth; negative space; motion lines; scale cues; dominant color relationships; and surfaces that can carry focal highlights. Look for what the photograph could become, not only what needs correction.
+- Define the strongest coherent transformation the source can support without sacrificing important subject structure.
+
+When the user supplies a visual reference, decompose it into transferable properties such as contrast topology, focal brightness, palette separation, depth, highlight placement, saturation strategy, and emotional scale. Treat those properties as an ambition bar, not as a LUT or composition to copy. Do not import content, geometry, typography, or a palette that the source does not support.
 
 Note the reported bit depth, ICC state, detected format, and extension agreement; apply the input/output policy above.
 
@@ -63,11 +67,13 @@ Use [references/parameters.md](references/parameters.md) progressively:
 2. Read a control's complete section before including that control in any recipe.
 3. Read `Local masks`, `Detail and output`, or `Analysis and reports` only when the task uses those capabilities. Do not load unrelated sections.
 
-For the default set, make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, or texture treatment. Stop when another direction would be cosmetic.
+For the default set, make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment. Stop when another direction would be cosmetic.
 
-Build tonal architecture before polishing color, but preserve the scene's native premise. A bold result need not force deep blacks and brilliant whites: a high-key, hazy, muted, or low-contrast image can be strongly authored through controlled hierarchy, palette, and separation. Never impose a genre preset or contradictory light merely to make a result look stronger.
+Before writing bold recipes, generate `3–5` scene-specific blockbuster theses internally. Vary the narrative and large-scale tonal architecture, not merely the palette. Explore different ways to amplify existing light, turn negative space and depth into scale, strengthen the relationship or motion between subjects, and reinterpret the scene's dominant color contrast. Select and render the strongest `1–3`; when candidates are similarly strong but genuinely distinct, keep multiple bold outputs instead of forcing an arbitrary single winner.
 
-Keep every direction achievable from existing pixels. Define observable success criteria for each direction, and make the bold concept visibly authored without depending only on a global hue wash or generic vignette.
+Build tonal architecture before polishing color. Preserve the scene's evidence, then amplify its strongest premise decisively. When the source offers bright focal surfaces, reflections, or caustics against open negative space, deliberately extend toward brilliant localized highlights and deep supporting tones; controlled local clipping and near-black regions are acceptable when important structure survives. A high-key, hazy, muted, or low-contrast blockbuster is valid only when its large-scale hierarchy, depth, focal separation, and emotional scale are still unmistakably authored. “Preserving the mood” must never justify a merely safer grade.
+
+Keep every direction achievable from existing pixels and never impose a genre preset or contradictory light. Define observable success criteria for each direction. A bold concept must visibly transform the scene's hierarchy without depending only on a global hue wash, uniform darkening, added saturation, or a generic vignette.
 
 ### 3. Commit one recipe per output
 
@@ -103,9 +109,11 @@ Visually inspect every encoded output with an original-detail viewer or represen
 - saturated colors and highlights for hue breaks or gamut-edge contours when perceptual rendering or gamut compression is active; use the pre-map excursion and visible mapping effect to judge severity because a final zero out-of-gamut ratio alone proves only that mapping completed;
 - actual IHDR bit depth and an independent decoder for 16-bit PNG, or gradients at 100% for both banding and structured texture when dithering is active.
 
-Inspect all variants together. Redesign any pair separated only by cosmetic changes. A creative or bold result must meet its declared thesis, while a natural result may remain restrained. If a result misses its thesis, revise only the responsible coordinated stages; if it introduces damage, reduce only the responsible controls. Rerender from the original without asking for confirmation.
+Inspect all variants together. Redesign any pair separated only by cosmetic changes. A natural result may remain restrained, but a creative or bold result fails if it reads as merely corrected, uniformly darker or cooler, palette-shifted, or dependent on side-by-side comparison to reveal its intent. Confirm that the bold result amplifies a scene-specific light, depth, scale, motion, or subject relationship and that its hierarchy remains strong in grayscale.
 
-Allow at most two corrective rerenders per output. If it still fails, use a conservative valid fallback or omit that variant and state the concrete limitation; never loop indefinitely.
+If a bold result misses its thesis, strengthen the responsible large-scale tone and local-light stages before adding more saturation or texture. If it introduces damage, reduce only the responsible controls. Rerender from the original without asking for confirmation.
+
+Allow at most two corrective rerenders per output. If a bold recipe still fails, abandon it and try the next-ranked bold thesis rather than shipping a conservative fallback. If no bold thesis can be rendered safely, omit it and state the concrete limitation; never loop indefinitely.
 
 ### 6. Deliver visible finals
 
