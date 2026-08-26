@@ -9,6 +9,7 @@
 - [Point curve](#point-curve)
 - [RGB channel curves](#rgb-channel-curves)
 - [Presence](#presence)
+- [Color management](#color-management)
 - [HSL](#hsl)
 - [Color grading](#color-grading)
 - [Local masks](#local-masks)
@@ -54,6 +55,10 @@ Include every top-level key shown below. Within `parameters`, include only activ
       "clarity": 0.12,
       "texture": 0.08
     },
+    "color_management": {
+      "rendering": "perceptual",
+      "gamut_mapping": "oklch_compress"
+    },
     "hsl": {
       "blue": {"saturation": 0.08, "luminance": -0.03}
     },
@@ -64,15 +69,16 @@ Include every top-level key shown below. Within `parameters`, include only activ
 }
 ```
 
-The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `presence`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
+The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `presence`, `color_management`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
 
 Omitted defaults are:
 
 - `0` for basic, HSL, and color-grading controls, except `color_grading.blending: 0.5`;
 - `0` for `presence.dehaze`, `presence.clarity`, and `presence.texture`;
+- `color_management.rendering: "legacy"` and `color_management.gamut_mapping: "clip"`;
 - `[]` for the point curve, each RGB channel curve, and both local-mask arrays;
 - `detail.denoise: 0`, `detail.sharpen: 0`, and `detail.sharpen_radius: 1`;
-- `output.jpeg_quality: 95` and `output.png_compress: 6`.
+- `output.jpeg_quality: 95`, `output.png_compress: 6`, `output.png_bit_depth: 8`, and `output.png_dither: "none"`.
 
 ## Intensity and creative range
 
@@ -191,6 +197,40 @@ The fixed global order is `dehaze` → `clarity` → `texture`, after `local_cor
 All three controls reconstruct RGB from adjusted encoded-sRGB luminance instead of independently sharpening R, G, and B. A highlight/shadow envelope, strong-gradient guard, and local 3×3 luminance envelope limit halos and full-strength step-edge overshoot/undershoot to at most `0.02`. Clarity and texture additionally use signed-gradient coherence to reduce amplification of random residuals in flat regions. Dehaze applies a small, gamut-constrained chroma factor while preserving the source hue vector; constant images remain unchanged.
 
 Use the three controls for distinct scales rather than stacking them by default. Dehaze is not a substitute for exposure or black-point work, clarity is not output sharpening, and texture is not denoise. Strong positive values may reveal existing noise or compression artifacts even with the guards, so inspect smooth skies, skin, foliage, building edges, and backlit haze at full resolution.
+
+## Color management
+
+`color_management` is optional and accepts exactly two string fields:
+
+```json
+"color_management": {
+  "rendering": "perceptual",
+  "gamut_mapping": "oklch_compress"
+}
+```
+
+| Field | Accepted values | Default | Behavior |
+|---|---|---|---|
+| `rendering` | `"legacy"`, `"perceptual"` | `"legacy"` | Selects the existing encoded-sRGB/HSV color algorithms or the fixed D65 sRGB/OKLab/OKLCh path. |
+| `gamut_mapping` | `"clip"`, `"oklch_compress"` | `"clip"` | Selects hard RGB clipping or fixed soft-knee OKLCh chroma compression. |
+
+The omitted/default pair is the compatibility path and does not change legacy pixels. `rendering: "perceptual"` changes only the global vibrance/saturation, HSL, and three-way color-grading stages:
+
+- vibrance and saturation scale OKLCh chroma while keeping OKLab lightness and hue;
+- the existing HSV hue ranges still determine HSL selection weights, but hue, chroma, and lightness changes are applied in OKLCh;
+- the full validated HSL saturation range through `+1.5` is effective in this path;
+- three-way grading adds color on the OKLab opponent axes and preserves OKLab lightness.
+
+`oklch_compress` uses a fixed OKLCh chroma knee of `0.10` and shoulder of `0.08`, plus a deterministic 24-iteration binary search for the per-pixel in-gamut safety boundary. The fixed response avoids turning the non-convex blue edge of the sRGB gamut into a visible contour. It preserves in-range OKLCh lightness and hue while reducing chroma; neutral colors keep zero chroma and do not receive an arbitrary hue. Gamut mapping runs after global color shaping and again after creative local adjustments. Processing rejects NaN or infinity at color-conversion and gamut boundaries rather than silently replacing invalid values.
+
+The strict ICC behavior applies when perceptual rendering, OKLCh compression, or 16-bit PNG output is selected:
+
+- an absent profile is explicitly treated as sRGB and the output is tagged with sRGB ICC;
+- a valid 8-bit source profile is converted to sRGB before grading; CMYK conversion starts from the original CMYK image mode;
+- conversion failure is an error before output creation;
+- a 16-bit PNG with no ICC or an sRGB ICC retains 16-bit samples, while a non-sRGB or invalid ICC is rejected with an instruction to convert externally to sRGB16.
+
+The legacy path keeps its prior fallback pixel behavior if ICC conversion fails and adds a `warnings` report entry. Unknown fields, non-string modes, or values outside the enumerations are validation errors. Recipe validation and all strict ICC checks finish before a new output is written.
 
 ## HSL
 
@@ -317,8 +357,14 @@ Accepted `detail` and `output` controls and ranges:
 | `detail.sharpen_radius` | Blur radius used by unsharp | `0.1` to `5` | Commonly `0.6–1.2` |
 | `output.jpeg_quality` | JPEG quality | integer `1` to `100` | Use `95` by default |
 | `output.png_compress` | PNG compression level | integer `0` to `9` | Use `6` by default; lossless |
+| `output.png_bit_depth` | PNG samples per RGB/alpha channel | integer `8` or `16` | Use `8` by default; `16` requires a PNG output path |
+| `output.png_dither` | RGB quantization dither | `"none"` or `"tpdf"` | Use `"none"` by default; `"tpdf"` requires 8-bit PNG |
 
 The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested.
+
+For 16-bit PNG, RGB is quantized as `round(clip(value, 0, 1) * 65535)`. Alpha is never graded or dithered: 8-bit source alpha expands exactly as `value * 257`, while retained 16-bit source alpha samples are written unchanged. The isolated PyPNG encoder writes RGB16 or RGBA16, preserves supported ICC, EXIF, DPI, and PNG text metadata, and verifies the IHDR bit depth after writing. JPEG and 16-bit PNG reject `png_dither: "tpdf"`; JPEG also rejects non-default `png_bit_depth` or `png_dither` settings.
+
+For 8-bit PNG, `png_dither: "tpdf"` adds deterministic coordinate-hashed, zero-mean triangular noise to encoded-sRGB RGB immediately before quantization. It has no configurable seed or strength, never touches alpha, and produces byte-identical output for the same input, recipe, and dependency versions. Use it only when long smooth gradients show or risk visible 8-bit platforms; it does not restore precision already absent from an 8-bit source.
 
 ## Analysis and reports
 
@@ -335,3 +381,5 @@ As with legacy metrics, a pixel is visible only when alpha is absent or alpha is
 `grade.processing` reports the fixed curve working space, interpolation, order, and active channel names without exposing curve points unless `--show-parameters` is explicitly set. `compare.rgb_channel_difference` provides signed mean, mean absolute, p95 absolute, and maximum absolute encoded-sRGB differences for each channel when geometry matches.
 
 When any global or local presence control is nonzero, `grade.processing.presence` is added with the fixed working signal, method and global order, the names of active global controls, and each local stage/index with active local control names. It does not expose numeric settings; use `--show-parameters` only when the expanded recipe is explicitly required. For recipes with no active presence control, this optional technical block is omitted so legacy reports retain their prior `processing` structure.
+
+`analyze` adds top-level `bit_depth` and `color_management.icc_status`. `grade.output_encoding` reports input and output bit depth, dither mode, input/output ICC state, and Python/NumPy/Pillow/PyPNG versions. When a new color-management path is active, `grade.processing.color_management` reports rendering and gamut modes, mapping stages, and the maximum pre-map plus final post-map out-of-gamut pixel ratios. `compare.output_encoding_difference` summarizes both bit depths and ICC states without changing the existing `checks` meanings. The optional `warnings` array is present only when a recoverable legacy ICC fallback occurred.

@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import io
 import json
 import math
+import platform
 import re
 import subprocess
 import sys
@@ -16,6 +19,11 @@ from typing import Any
 
 import numpy as np
 from PIL import Image, ImageCms, ImageFilter, PngImagePlugin
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from png16 import chunk_types, inspect_ihdr, read_png16, write_png16
 
 
 SUPPORTED = {".jpg", ".jpeg", ".png"}
@@ -53,12 +61,43 @@ BASIC_FIELD_ORDER = (
 BASIC_FIELDS = set(BASIC_FIELD_ORDER)
 CHANNEL_NAMES = ("red", "green", "blue")
 PRESENCE_FIELDS = {"dehaze", "clarity", "texture"}
+COLOR_RENDERING_MODES = {"legacy", "perceptual"}
+GAMUT_MAPPING_MODES = {"clip", "oklch_compress"}
+PNG_DITHER_MODES = {"none", "tpdf"}
 LOCAL_PRESENCE_FIELDS = {"clarity", "texture"}
 LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve", "channel_curves"} | LOCAL_PRESENCE_FIELDS
 COMPOSITE_MASK_OPERATIONS = {"and", "or", "subtract"}
 MAX_MASK_DEPTH = 6
 MAX_MASK_LEAVES = 32
 SKILL_ROOT = Path(__file__).resolve().parent.parent
+SRGB_TO_XYZ = np.array(
+    [
+        [0.4124564, 0.3575761, 0.1804375],
+        [0.2126729, 0.7151522, 0.0721750],
+        [0.0193339, 0.1191920, 0.9503041],
+    ],
+    dtype=np.float64,
+)
+XYZ_TO_SRGB = np.linalg.inv(SRGB_TO_XYZ)
+LINEAR_SRGB_TO_LMS = np.array(
+    [
+        [0.4122214708, 0.5363325363, 0.0514459929],
+        [0.2119034982, 0.6806995451, 0.1073969566],
+        [0.0883024619, 0.2817188376, 0.6299787005],
+    ],
+    dtype=np.float64,
+)
+XYZ_TO_LMS = LINEAR_SRGB_TO_LMS @ XYZ_TO_SRGB
+LMS_CUBERT_TO_OKLAB = np.array(
+    [
+        [0.2104542553, 0.7936177850, -0.0040720468],
+        [1.9779984951, -2.4285922050, 0.4505937099],
+        [0.0259040371, 0.7827717662, -0.8086757660],
+    ],
+    dtype=np.float64,
+)
+OKLAB_TO_LMS_CUBERT = np.linalg.inv(LMS_CUBERT_TO_OKLAB)
+LMS_TO_XYZ = np.linalg.inv(XYZ_TO_LMS)
 
 
 def check_for_update() -> str | None:
@@ -290,6 +329,7 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         "curve",
         "channel_curves",
         "presence",
+        "color_management",
         "hsl",
         "color_grading",
         "local_corrections",
@@ -316,6 +356,26 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         "recipe.parameters.channel_curves",
     )
     normalized["channel_curves"] = channel_curves
+
+    color_management = require_object(
+        parameters.get("color_management", {}),
+        "recipe.parameters.color_management",
+    )
+    reject_unknown_keys(
+        color_management,
+        {"rendering", "gamut_mapping"},
+        "recipe.parameters.color_management",
+    )
+    rendering = color_management.get("rendering", "legacy")
+    if not isinstance(rendering, str) or rendering not in COLOR_RENDERING_MODES:
+        raise ValueError("recipe.parameters.color_management.rendering must be legacy or perceptual.")
+    gamut_mapping = color_management.get("gamut_mapping", "clip")
+    if not isinstance(gamut_mapping, str) or gamut_mapping not in GAMUT_MAPPING_MODES:
+        raise ValueError(
+            "recipe.parameters.color_management.gamut_mapping must be clip or oklch_compress."
+        )
+    normalized["rendering"] = rendering
+    normalized["gamut_mapping"] = gamut_mapping
 
     presence = require_object(parameters.get("presence", {}), "recipe.parameters.presence")
     reject_unknown_keys(presence, PRESENCE_FIELDS, "recipe.parameters.presence")
@@ -398,19 +458,37 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
     normalized["sharpen_radius"] = sharpen_radius
 
     output = require_object(parameters.get("output", {}), "recipe.parameters.output")
-    reject_unknown_keys(output, {"jpeg_quality", "png_compress"}, "recipe.parameters.output")
+    reject_unknown_keys(
+        output,
+        {"jpeg_quality", "png_compress", "png_bit_depth", "png_dither"},
+        "recipe.parameters.output",
+    )
     jpeg_quality = require_number(output.get("jpeg_quality", 95), "recipe.parameters.output.jpeg_quality", 1, 100)
     png_compress = require_number(output.get("png_compress", 6), "recipe.parameters.output.png_compress", 0, 9)
-    if not jpeg_quality.is_integer() or not png_compress.is_integer():
-        raise ValueError("Output quality and compression values must be integers.")
+    png_bit_depth = require_number(output.get("png_bit_depth", 8), "recipe.parameters.output.png_bit_depth", 8, 16)
+    if not jpeg_quality.is_integer() or not png_compress.is_integer() or not png_bit_depth.is_integer():
+        raise ValueError("Output quality, compression, and PNG bit-depth values must be integers.")
+    if int(png_bit_depth) not in {8, 16}:
+        raise ValueError("recipe.parameters.output.png_bit_depth must be 8 or 16.")
+    png_dither = output.get("png_dither", "none")
+    if not isinstance(png_dither, str) or png_dither not in PNG_DITHER_MODES:
+        raise ValueError("recipe.parameters.output.png_dither must be none or tpdf.")
+    if int(png_bit_depth) == 16 and png_dither != "none":
+        raise ValueError("PNG dithering is only supported for 8-bit PNG output.")
     normalized["jpeg_quality"] = int(jpeg_quality)
     normalized["png_compress"] = int(png_compress)
+    normalized["png_bit_depth"] = int(png_bit_depth)
+    normalized["png_dither"] = png_dither
     expanded_recipe = dict(recipe)
     expanded_recipe["parameters"] = {
         "basic": expanded_basic,
         "curve": curve,
         "channel_curves": expanded_channel_curves,
         "presence": expanded_presence,
+        "color_management": {
+            "rendering": rendering,
+            "gamut_mapping": gamut_mapping,
+        },
         "hsl": expanded_hsl,
         "color_grading": expanded_grading,
         "local_corrections": local_corrections,
@@ -423,6 +501,8 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         "output": {
             "jpeg_quality": int(jpeg_quality),
             "png_compress": int(png_compress),
+            "png_bit_depth": int(png_bit_depth),
+            "png_dither": png_dither,
         },
     }
     return argparse.Namespace(**normalized), expanded_recipe
@@ -440,6 +520,181 @@ def srgb_to_linear(rgb: np.ndarray) -> np.ndarray:
 def linear_to_srgb(rgb: np.ndarray) -> np.ndarray:
     rgb = np.maximum(rgb, 0.0)
     return np.where(rgb <= 0.0031308, 12.92 * rgb, 1.055 * np.power(rgb, 1.0 / 2.4) - 0.055)
+
+
+def extended_srgb_to_linear(rgb: np.ndarray) -> np.ndarray:
+    """Decode finite extended sRGB without evaluating fractional powers of negatives."""
+    values = np.asarray(rgb, dtype=np.float64)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Color processing requires finite RGB values.")
+    result = np.empty_like(values)
+    linear_segment = values <= 0.04045
+    result[linear_segment] = values[linear_segment] / 12.92
+    result[~linear_segment] = ((values[~linear_segment] + 0.055) / 1.055) ** 2.4
+    return result
+
+
+def extended_linear_to_srgb(rgb: np.ndarray) -> np.ndarray:
+    """Encode finite extended linear sRGB using a sign-preserving transfer curve."""
+    values = np.asarray(rgb, dtype=np.float64)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Color processing requires finite linear RGB values.")
+    result = np.empty_like(values)
+    linear_segment = values <= 0.0031308
+    result[linear_segment] = 12.92 * values[linear_segment]
+    result[~linear_segment] = 1.055 * np.power(values[~linear_segment], 1.0 / 2.4) - 0.055
+    return result
+
+
+def linear_srgb_to_xyz(linear_rgb: np.ndarray) -> np.ndarray:
+    values = np.asarray(linear_rgb, dtype=np.float64)
+    if values.shape[-1] != 3 or not np.all(np.isfinite(values)):
+        raise ValueError("linear_srgb_to_xyz expects finite RGB triples.")
+    return values @ SRGB_TO_XYZ.T
+
+
+def xyz_to_linear_srgb(xyz: np.ndarray) -> np.ndarray:
+    values = np.asarray(xyz, dtype=np.float64)
+    if values.shape[-1] != 3 or not np.all(np.isfinite(values)):
+        raise ValueError("xyz_to_linear_srgb expects finite XYZ triples.")
+    return values @ XYZ_TO_SRGB.T
+
+
+def xyz_to_oklab(xyz: np.ndarray) -> np.ndarray:
+    values = np.asarray(xyz, dtype=np.float64)
+    if values.shape[-1] != 3 or not np.all(np.isfinite(values)):
+        raise ValueError("xyz_to_oklab expects finite XYZ triples.")
+    lms = values @ XYZ_TO_LMS.T
+    result = np.cbrt(lms) @ LMS_CUBERT_TO_OKLAB.T
+    if not np.all(np.isfinite(result)):
+        raise ValueError("XYZ to OKLab conversion produced non-finite values.")
+    return result
+
+
+def oklab_to_xyz(oklab: np.ndarray) -> np.ndarray:
+    values = np.asarray(oklab, dtype=np.float64)
+    if values.shape[-1] != 3 or not np.all(np.isfinite(values)):
+        raise ValueError("oklab_to_xyz expects finite OKLab triples.")
+    lms_root = values @ OKLAB_TO_LMS_CUBERT.T
+    result = (lms_root**3) @ LMS_TO_XYZ.T
+    if not np.all(np.isfinite(result)):
+        raise ValueError("OKLab to XYZ conversion produced non-finite values.")
+    return result
+
+
+def srgb_to_oklab(rgb: np.ndarray) -> np.ndarray:
+    return xyz_to_oklab(linear_srgb_to_xyz(extended_srgb_to_linear(rgb)))
+
+
+def oklab_to_srgb(oklab: np.ndarray) -> np.ndarray:
+    return extended_linear_to_srgb(xyz_to_linear_srgb(oklab_to_xyz(oklab)))
+
+
+def oklab_to_oklch(oklab: np.ndarray) -> np.ndarray:
+    values = np.asarray(oklab, dtype=np.float64)
+    chroma = np.hypot(values[..., 1], values[..., 2])
+    hue = np.degrees(np.arctan2(values[..., 2], values[..., 1])) % 360.0
+    hue = np.where(chroma <= 1e-12, 0.0, hue)
+    return np.stack((values[..., 0], chroma, hue), axis=-1)
+
+
+def oklch_to_oklab(oklch: np.ndarray) -> np.ndarray:
+    values = np.asarray(oklch, dtype=np.float64)
+    angle = np.radians(values[..., 2])
+    return np.stack(
+        (
+            values[..., 0],
+            values[..., 1] * np.cos(angle),
+            values[..., 1] * np.sin(angle),
+        ),
+        axis=-1,
+    )
+
+
+def out_of_gamut_ratio(rgb: np.ndarray) -> float:
+    values = np.asarray(rgb)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Gamut inspection encountered non-finite RGB values.")
+    return float(np.mean(np.any((values < 0.0) | (values > 1.0), axis=-1)))
+
+
+def _oklch_compress_block(source: np.ndarray, iterations: int) -> np.ndarray:
+    oklch = oklab_to_oklch(srgb_to_oklab(source))
+    lightness = np.clip(oklch[..., 0], 0.0, 1.0)
+    chroma = np.maximum(oklch[..., 1], 0.0)
+    hue = oklch[..., 2]
+    low = np.zeros_like(chroma)
+    high = np.full_like(chroma, 0.02)
+    direction = np.stack((np.cos(np.radians(hue)), np.sin(np.radians(hue))), axis=-1)
+
+    def candidate_rgb(candidate_chroma: np.ndarray) -> np.ndarray:
+        lab = np.concatenate(
+            (
+                lightness[..., None],
+                direction * candidate_chroma[..., None],
+            ),
+            axis=-1,
+        )
+        return oklab_to_srgb(lab)
+
+    # Grow outward from the neutral axis so the binary search brackets the
+    # first gamut boundary instead of accidentally landing on a later cubic
+    # re-entry of an individual linear-RGB channel.
+    for _ in range(10):
+        candidate = candidate_rgb(high)
+        still_in = np.all((candidate >= 0.0) & (candidate <= 1.0), axis=-1)
+        low = np.where(still_in, high, low)
+        high = np.where(still_in, high * 2.0, high)
+    for _ in range(iterations):
+        midpoint = (low + high) * 0.5
+        candidate = candidate_rgb(midpoint)
+        in_gamut = np.all((candidate >= 0.0) & (candidate <= 1.0), axis=-1)
+        low = np.where(in_gamut, midpoint, low)
+        high = np.where(in_gamut, high, midpoint)
+    maximum = low
+    # A fixed conservative knee avoids exposing the non-convex blue cusp of
+    # the sRGB gamut as a visible contour. The per-pixel search remains the
+    # hard safety boundary, while the fixed shoulder provides a continuous
+    # hue-independent compression response before that boundary is reached.
+    knee = 0.10
+    shoulder = 0.08
+    excess = np.maximum(chroma - knee, 0.0)
+    compressed = knee + excess / (1.0 + excess / shoulder)
+    target_chroma = np.where(chroma <= knee, chroma, np.minimum(compressed, maximum))
+    target_chroma = np.where(chroma <= 1e-12, 0.0, target_chroma)
+    result = candidate_rgb(target_chroma)
+    if not np.all(np.isfinite(result)):
+        raise ValueError("OKLCh gamut compression produced non-finite RGB values.")
+    return np.clip(result, 0.0, 1.0).astype(np.float32)
+
+
+def oklch_compress(rgb: np.ndarray, iterations: int = 24) -> np.ndarray:
+    """Compress OKLCh chroma with bounded temporary storage and fixed settings."""
+    source = np.asarray(rgb, dtype=np.float64)
+    if source.shape[-1] != 3 or not np.all(np.isfinite(source)):
+        raise ValueError("OKLCh gamut compression expects finite RGB triples.")
+    flat = source.reshape(-1, 3)
+    compressed = np.empty(flat.shape, dtype=np.float32)
+    block_pixels = 262_144
+    for start in range(0, flat.shape[0], block_pixels):
+        end = min(start + block_pixels, flat.shape[0])
+        compressed[start:end] = _oklch_compress_block(flat[start:end], iterations)
+    return compressed.reshape(source.shape)
+
+
+def apply_gamut_mapping(rgb: np.ndarray, mode: str) -> tuple[np.ndarray, dict[str, float]]:
+    before = out_of_gamut_ratio(rgb)
+    if mode == "clip":
+        result = np.clip(rgb, 0.0, 1.0)
+    elif mode == "oklch_compress":
+        result = oklch_compress(rgb)
+    else:
+        raise ValueError(f"Unsupported gamut mapping mode: {mode}")
+    after = out_of_gamut_ratio(result)
+    return result.astype(np.float32, copy=False), {
+        "out_of_gamut_ratio_before": round(before, 8),
+        "out_of_gamut_ratio_after": round(after, 8),
+    }
 
 
 def smoothstep(edge0: float, edge1: float, x: np.ndarray) -> np.ndarray:
@@ -492,39 +747,140 @@ def circular_hue_weight(hue: np.ndarray, center: float, width: float = 32.0) -> 
     return np.exp(-0.5 * (distance / width) ** 2)
 
 
-def load_image(path: Path) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any]]:
+def srgb_profile_bytes() -> bytes:
+    profile = bytearray(ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes())
+    # LittleCMS stamps generated profiles with the wall-clock time. Normalize
+    # only the ICC header creation date so separate CLI processes encode the
+    # same canonical sRGB profile bytes; the generated profile ID is zero.
+    profile[24:36] = b"\x07\xd0\x00\x01\x00\x01\x00\x00\x00\x00\x00\x00"
+    return bytes(profile)
+
+
+def profile_is_srgb(profile_bytes: bytes) -> bool:
+    profile = ImageCms.ImageCmsProfile(io.BytesIO(profile_bytes))
+    description = ImageCms.getProfileDescription(profile).strip().lower()
+    return "srgb" in description
+
+
+def image_source_bit_depth(path: Path, format_name: str | None = None) -> int:
+    if (format_name or "").upper() == "PNG":
+        return int(inspect_ihdr(path)["bit_depth"])
+    return 8
+
+
+def runtime_versions() -> dict[str, str]:
+    try:
+        pypng_version = importlib.metadata.version("pypng")
+    except importlib.metadata.PackageNotFoundError:
+        pypng_version = "unavailable"
+    return {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "pillow": Image.__version__,
+        "pypng": pypng_version,
+    }
+
+
+def load_image(
+    path: Path,
+    *,
+    strict_color_management: bool = False,
+    preserve_png16: bool = False,
+) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any]]:
     require_supported(path)
     with Image.open(path) as source:
         source.load()
+        source_bit_depth = image_source_bit_depth(path, source.format)
         metadata: dict[str, Any] = {
             "format": source.format,
+            "source_mode": source.mode,
+            "source_bit_depth": source_bit_depth,
             "exif": source.info.get("exif"),
             "icc_profile": source.info.get("icc_profile"),
             "dpi": source.info.get("dpi"),
             "png_text": {k: v for k, v in source.info.items() if isinstance(v, str)},
+            "icc_status": "absent_assumed_srgb" if not source.info.get("icc_profile") else "present",
+            "warnings": [],
         }
         has_alpha = source.mode in {"RGBA", "LA"} or (
             source.mode == "P" and "transparency" in source.info
         )
-        image = source.convert("RGBA") if has_alpha else source.convert("RGB")
+        if preserve_png16 and source.format == "PNG" and source_bit_depth == 16:
+            rgb, alpha, direct = read_png16(path)
+            has_alpha = alpha is not None
+            if metadata["icc_profile"]:
+                try:
+                    if not profile_is_srgb(metadata["icc_profile"]):
+                        raise ValueError(
+                            "16-bit PNG input uses a non-sRGB ICC profile; convert it externally to sRGB16 first."
+                        )
+                except ValueError:
+                    raise
+                except Exception as exc:
+                    raise ValueError("16-bit PNG input has an invalid ICC profile.") from exc
+                metadata["icc_status"] = "source_srgb_profile"
+            else:
+                metadata["icc_status"] = "absent_assumed_srgb"
+            if strict_color_management:
+                metadata["icc_profile"] = srgb_profile_bytes()
+            metadata["size"] = [direct["width"], direct["height"]]
+            metadata["has_alpha"] = has_alpha
+            return rgb, alpha, metadata
 
-        if metadata["icc_profile"]:
-            try:
-                in_profile = ImageCms.ImageCmsProfile(metadata["icc_profile"])
-                out_profile = ImageCms.createProfile("sRGB")
-                output_mode = "RGBA" if has_alpha else "RGB"
-                image = ImageCms.profileToProfile(image, in_profile, out_profile, outputMode=output_mode)
-                metadata["icc_profile"] = ImageCms.ImageCmsProfile(out_profile).tobytes()
-            except Exception:
-                # Keep the original profile if Pillow cannot safely transform it.
-                pass
+        if strict_color_management:
+            if source.mode == "CMYK" and not metadata["icc_profile"]:
+                raise ValueError("CMYK input requires a valid ICC profile for perceptual or high-bit-depth processing.")
+            if metadata["icc_profile"]:
+                try:
+                    in_profile = ImageCms.ImageCmsProfile(io.BytesIO(metadata["icc_profile"]))
+                    out_profile = ImageCms.createProfile("sRGB")
+                    alpha_pixels = (
+                        np.asarray(source.convert("RGBA"), dtype=np.float32)[..., 3:4] / 255.0
+                        if has_alpha
+                        else None
+                    )
+                    color_source = source if source.mode == "CMYK" else source.convert("RGB")
+                    image = ImageCms.profileToProfile(
+                        color_source,
+                        in_profile,
+                        out_profile,
+                        outputMode="RGB",
+                    )
+                    metadata["icc_profile"] = srgb_profile_bytes()
+                    metadata["icc_status"] = "converted_to_srgb"
+                    rgb = np.asarray(image, dtype=np.float32) / 255.0
+                    alpha = None if alpha_pixels is None else alpha_pixels.astype(np.float32)
+                except Exception as exc:
+                    raise ValueError("ICC conversion to sRGB failed for the selected new processing path.") from exc
+            else:
+                image = source.convert("RGBA") if has_alpha else source.convert("RGB")
+                pixels = np.asarray(image, dtype=np.float32) / 255.0
+                alpha = pixels[..., 3:4].copy() if has_alpha else None
+                rgb = pixels[..., :3].copy()
+                metadata["icc_profile"] = srgb_profile_bytes()
+                metadata["icc_status"] = "absent_assumed_srgb"
+        else:
+            image = source.convert("RGBA") if has_alpha else source.convert("RGB")
+            if metadata["icc_profile"]:
+                try:
+                    in_profile = ImageCms.ImageCmsProfile(metadata["icc_profile"])
+                    out_profile = ImageCms.createProfile("sRGB")
+                    output_mode = "RGBA" if has_alpha else "RGB"
+                    image = ImageCms.profileToProfile(image, in_profile, out_profile, outputMode=output_mode)
+                    metadata["icc_profile"] = ImageCms.ImageCmsProfile(out_profile).tobytes()
+                    metadata["icc_status"] = "converted_to_srgb"
+                except Exception:
+                    metadata["icc_status"] = "conversion_failed_legacy_fallback"
+                    metadata["warnings"].append(
+                        "ICC conversion failed; legacy processing continued with the original profile and pixel behavior."
+                    )
+            pixels = np.asarray(image, dtype=np.float32) / 255.0
+            alpha = pixels[..., 3:4].copy() if has_alpha else None
+            rgb = pixels[..., :3].copy()
 
-        pixels = np.asarray(image, dtype=np.float32) / 255.0
-        alpha = pixels[..., 3:4].copy() if has_alpha else None
-        rgb = pixels[..., :3].copy()
-        metadata["size"] = [int(image.width), int(image.height)]
+        metadata["size"] = [int(source.width), int(source.height)]
         metadata["has_alpha"] = has_alpha
-        return rgb, alpha, metadata
+        return rgb.astype(np.float32, copy=False), alpha, metadata
 
 
 def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str, Any]:
@@ -624,14 +980,21 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
 
 def analyze(path: Path) -> dict[str, Any]:
     rgb, alpha, meta = load_image(path)
-    return {
+    result = {
         "file": str(path),
         "format": meta["format"],
         "width": meta["size"][0],
         "height": meta["size"][1],
         "has_alpha": meta["has_alpha"],
+        "bit_depth": meta["source_bit_depth"],
+        "color_management": {
+            "icc_status": meta["icc_status"],
+        },
         "metrics": image_metrics(rgb, alpha),
     }
+    if meta["warnings"]:
+        result["warnings"] = list(meta["warnings"])
+    return result
 
 
 def apply_white_balance(linear: np.ndarray, temperature: float, tint: float) -> np.ndarray:
@@ -696,6 +1059,38 @@ def apply_color(rgb: np.ndarray, vibrance: float, saturation: float) -> np.ndarr
     result = luma + (rgb - luma) * factor[..., None]
     saturation_factor = 1.0 + float(np.clip(saturation, -1.0, 1.0))
     return luma + (result - luma) * saturation_factor
+
+
+def apply_perceptual_color(rgb: np.ndarray, vibrance: float, saturation: float) -> np.ndarray:
+    """Apply global colorfulness controls to OKLCh chroma while preserving L and hue."""
+    if max(abs(vibrance), abs(saturation)) < 1e-12:
+        return rgb
+    source = np.asarray(rgb, dtype=np.float32)
+    if not np.all(np.isfinite(source)):
+        raise ValueError("Perceptual color processing requires finite RGB values.")
+    lch = oklab_to_oklch(srgb_to_oklab(source))
+    original_chroma = lch[..., 1].copy()
+    hsv_hue, hsv_saturation, _ = rgb_hsv_components(np.clip(source, 0.0, 1.0))
+    skin = (
+        circular_hue_weight(hsv_hue, 28.0, 22.0)
+        * smoothstep(0.08, 0.35, hsv_saturation)
+        * (1.0 - smoothstep(0.72, 1.0, hsv_saturation))
+    )
+    vibrance_value = float(np.clip(vibrance, -1.0, 1.0))
+    normalized_chroma = np.clip(original_chroma / 0.32, 0.0, 1.0)
+    if vibrance_value >= 0.0:
+        vibrance_factor = 1.0 + vibrance_value * (1.0 - normalized_chroma) * (1.0 - 0.65 * skin)
+    else:
+        vibrance_factor = 1.0 + vibrance_value * (0.45 + 0.55 * normalized_chroma)
+    saturation_factor = 1.0 + float(np.clip(saturation, -1.0, 1.0))
+    lch[..., 1] = np.maximum(original_chroma * vibrance_factor * saturation_factor, 0.0)
+    result = oklab_to_srgb(oklch_to_oklab(lch))
+    neutral = original_chroma <= 2e-7
+    if np.any(neutral):
+        result[neutral] = source[neutral]
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Perceptual color processing produced non-finite RGB values.")
+    return result.astype(np.float32)
 
 
 def parse_curve(specification: str | None) -> tuple[np.ndarray, np.ndarray] | None:
@@ -952,6 +1347,42 @@ def apply_selective_color(
     return scale_to_luma(shifted, target)
 
 
+def apply_perceptual_selective_color(
+    rgb: np.ndarray,
+    adjustments: dict[str, tuple[float, float, float]],
+) -> np.ndarray:
+    if not any(max(abs(value) for value in controls) >= 1e-12 for controls in adjustments.values()):
+        return rgb
+    source = np.asarray(rgb, dtype=np.float32)
+    if not np.all(np.isfinite(source)):
+        raise ValueError("Perceptual HSL processing requires finite RGB values.")
+    base = np.clip(source, 0.0, 1.0)
+    selection_hue, selection_saturation, _ = rgb_hsv_components(base)
+    presence = smoothstep(0.025, 0.2, selection_saturation)
+    lch = oklab_to_oklch(srgb_to_oklab(source))
+    original_chroma = lch[..., 1].copy()
+    hue_shift = np.zeros_like(selection_hue, dtype=np.float64)
+    chroma_delta = np.zeros_like(selection_hue, dtype=np.float64)
+    lightness_stops = np.zeros_like(selection_hue, dtype=np.float64)
+    for name, (hue_adjust, saturation_adjust, luminance_adjust) in adjustments.items():
+        if max(abs(hue_adjust), abs(saturation_adjust), abs(luminance_adjust)) < 1e-12:
+            continue
+        weight = circular_hue_weight(selection_hue, HUE_CENTERS[name]) * presence
+        hue_shift += float(np.clip(hue_adjust, -90.0, 90.0)) * weight
+        chroma_delta += float(np.clip(saturation_adjust, -1.0, 1.5)) * weight
+        lightness_stops += 0.45 * float(np.clip(luminance_adjust, -1.0, 1.0)) * weight
+    lch[..., 2] = (lch[..., 2] + np.clip(hue_shift, -90.0, 90.0)) % 360.0
+    lch[..., 1] = np.maximum(original_chroma * (1.0 + np.clip(chroma_delta, -1.0, 1.5)), 0.0)
+    lch[..., 0] = np.clip(lch[..., 0] * np.exp2(lightness_stops), 0.0, 1.0)
+    result = oklab_to_srgb(oklch_to_oklab(lch))
+    neutral = original_chroma <= 2e-7
+    if np.any(neutral):
+        result[neutral] = source[neutral]
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Perceptual HSL processing produced non-finite RGB values.")
+    return result.astype(np.float32)
+
+
 def hue_chroma(hue: float) -> np.ndarray:
     h = np.array([[hue]], dtype=np.float32)
     color = hsv_to_rgb(h, np.ones_like(h), np.ones_like(h))[0, 0]
@@ -993,6 +1424,48 @@ def apply_color_grading(
     return scale_to_luma(result, luma)
 
 
+def apply_perceptual_color_grading(
+    rgb: np.ndarray,
+    shadows_hue: float,
+    shadows_sat: float,
+    midtones_hue: float,
+    midtones_sat: float,
+    highlights_hue: float,
+    highlights_sat: float,
+    balance: float,
+    blending: float,
+) -> np.ndarray:
+    if max(abs(shadows_sat), abs(midtones_sat), abs(highlights_sat)) < 1e-12:
+        return rgb
+    source = np.asarray(rgb, dtype=np.float32)
+    lab = srgb_to_oklab(source)
+    lightness = np.clip(lab[..., 0], 0.0, 1.0)
+    balance = float(np.clip(balance, -1.0, 1.0))
+    blending = float(np.clip(blending, 0.0, 1.0))
+    pivot = 0.5 - 0.16 * balance
+    width = 0.16 + 0.18 * blending
+    shadow_weight = 1.0 - smoothstep(pivot - width, pivot + width, lightness)
+    highlight_weight = smoothstep(pivot - width, pivot + width, lightness)
+    midtone_weight = np.exp(-0.5 * ((lightness - pivot) / width) ** 2)
+    zones = (
+        (shadows_hue, shadows_sat, shadow_weight),
+        (midtones_hue, midtones_sat, midtone_weight),
+        (highlights_hue, highlights_sat, highlight_weight),
+    )
+    result = lab.copy()
+    for hue_value, saturation_value, weight in zones:
+        chroma = 0.12 * float(np.clip(saturation_value, 0.0, 1.0))
+        if chroma <= 0.0:
+            continue
+        angle = math.radians(float(hue_value) % 360.0)
+        result[..., 1] += math.cos(angle) * chroma * weight
+        result[..., 2] += math.sin(angle) * chroma * weight
+    output = oklab_to_srgb(result)
+    if not np.all(np.isfinite(output)):
+        raise ValueError("Perceptual color grading produced non-finite RGB values.")
+    return output.astype(np.float32)
+
+
 def apply_tonal_adjustments(rgb: np.ndarray, parameters: Any) -> np.ndarray:
     linear = srgb_to_linear(np.clip(rgb, 0.0, 1.0))
     linear = apply_white_balance(linear, parameters.temperature, parameters.tint)
@@ -1017,10 +1490,12 @@ def apply_adjustment_bundle(rgb: np.ndarray, parameters: Any) -> np.ndarray:
         clarity=getattr(parameters, "clarity", 0.0),
         texture=getattr(parameters, "texture", 0.0),
     )
+    if getattr(parameters, "rendering", "legacy") == "perceptual":
+        return apply_perceptual_color(result, parameters.vibrance, parameters.saturation)
     return apply_color(result, parameters.vibrance, parameters.saturation)
 
 
-def local_parameters(adjustments: dict[str, Any]) -> SimpleNamespace:
+def local_parameters(adjustments: dict[str, Any], rendering: str = "legacy") -> SimpleNamespace:
     allowed = {
         "exposure",
         "temperature",
@@ -1043,6 +1518,7 @@ def local_parameters(adjustments: dict[str, Any]) -> SimpleNamespace:
     values = {name: 0.0 for name in allowed if name not in {"curve", "channel_curves"}}
     values["curve"] = None
     values["channel_curves"] = {}
+    values["rendering"] = rendering
     values.update(adjustments)
     return SimpleNamespace(**values)
 
@@ -1153,7 +1629,11 @@ def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarr
     return _build_local_mask(rgb, specification, x, y, depth=1, leaf_counter=[0])
 
 
-def apply_local_adjustments(rgb: np.ndarray, payload: Any) -> np.ndarray:
+def apply_local_adjustments(
+    rgb: np.ndarray,
+    payload: Any,
+    rendering: str = "legacy",
+) -> np.ndarray:
     if not payload:
         return rgb
     masks = payload.get("masks") if isinstance(payload, dict) else payload
@@ -1167,7 +1647,7 @@ def apply_local_adjustments(rgb: np.ndarray, payload: Any) -> np.ndarray:
         if not isinstance(adjustments, dict):
             raise ValueError("Local adjustments must be an object.")
         mask = build_local_mask(result, item["mask"])
-        variant = apply_adjustment_bundle(result, local_parameters(adjustments))
+        variant = apply_adjustment_bundle(result, local_parameters(adjustments, rendering))
         result = result * (1.0 - mask[..., None]) + variant * mask[..., None]
     return result
 
@@ -1195,17 +1675,26 @@ def apply_sharpen(rgb: np.ndarray, sharpen: float, radius: float) -> np.ndarray:
     return np.clip(result, 0.0, 1.0)
 
 
-def grade_pixels(rgb: np.ndarray, args: argparse.Namespace) -> np.ndarray:
+def grade_pixels(
+    rgb: np.ndarray,
+    args: argparse.Namespace,
+    diagnostics: dict[str, Any] | None = None,
+) -> np.ndarray:
     result = apply_denoise(rgb, args.denoise)
     result = apply_tonal_adjustments(result, args)
-    result = apply_local_adjustments(result, args.local_corrections)
+    rendering = getattr(args, "rendering", "legacy")
+    result = apply_local_adjustments(result, args.local_corrections, rendering)
     result = apply_presence(
         result,
         getattr(args, "dehaze", 0.0),
         getattr(args, "clarity", 0.0),
         getattr(args, "texture", 0.0),
     )
-    result = apply_color(result, args.vibrance, args.saturation)
+    gamut_mapping = getattr(args, "gamut_mapping", "clip")
+    if rendering == "perceptual":
+        result = apply_perceptual_color(result, args.vibrance, args.saturation)
+    else:
+        result = apply_color(result, args.vibrance, args.saturation)
     adjustments = {
         name: (
             getattr(args, f"{name}_hue"),
@@ -1214,21 +1703,68 @@ def grade_pixels(rgb: np.ndarray, args: argparse.Namespace) -> np.ndarray:
         )
         for name in HUE_CENTERS
     }
-    result = apply_selective_color(result, adjustments)
-    result = apply_color_grading(
-        result,
-        args.grade_shadows_hue,
-        args.grade_shadows_sat,
-        args.grade_midtones_hue,
-        args.grade_midtones_sat,
-        args.grade_highlights_hue,
-        args.grade_highlights_sat,
-        args.grading_balance,
-        args.grading_blending,
-    )
-    result = apply_local_adjustments(result, args.local_adjustments)
+    if rendering == "perceptual":
+        result = apply_perceptual_selective_color(result, adjustments)
+        result = apply_perceptual_color_grading(
+            result,
+            args.grade_shadows_hue,
+            args.grade_shadows_sat,
+            args.grade_midtones_hue,
+            args.grade_midtones_sat,
+            args.grade_highlights_hue,
+            args.grade_highlights_sat,
+            args.grading_balance,
+            args.grading_blending,
+        )
+    else:
+        result = apply_selective_color(result, adjustments)
+        result = apply_color_grading(
+            result,
+            args.grade_shadows_hue,
+            args.grade_shadows_sat,
+            args.grade_midtones_hue,
+            args.grade_midtones_sat,
+            args.grade_highlights_hue,
+            args.grade_highlights_sat,
+            args.grading_balance,
+            args.grading_blending,
+        )
+    mapping_stages: list[dict[str, Any]] = []
+    if rendering != "legacy" or gamut_mapping != "clip":
+        result, mapping = apply_gamut_mapping(result, gamut_mapping)
+        mapping_stages.append({"stage": "post_color", **mapping})
+    result = apply_local_adjustments(result, args.local_adjustments, rendering)
+    if rendering != "legacy" or gamut_mapping != "clip":
+        result, mapping = apply_gamut_mapping(result, gamut_mapping)
+        mapping_stages.append({"stage": "final", **mapping})
+        if diagnostics is not None:
+            diagnostics["gamut_mapping_stages"] = mapping_stages
     result = apply_sharpen(result, args.sharpen, args.sharpen_radius)
     return np.clip(result, 0.0, 1.0)
+
+
+def deterministic_tpdf(shape: tuple[int, int, int]) -> np.ndarray:
+    """Return coordinate-hashed zero-mean TPDF noise in one-LSB units."""
+    if len(shape) != 3 or shape[2] != 3:
+        raise ValueError("TPDF noise expects an RGB image shape.")
+    height, width, _ = shape
+    y, x, channel = np.ogrid[:height, :width, :3]
+
+    def uniform(salt: int) -> np.ndarray:
+        value = (
+            x.astype(np.uint64) * np.uint64(0x1F123BB5)
+            + y.astype(np.uint64) * np.uint64(0x5F356495)
+            + channel.astype(np.uint64) * np.uint64(0x9E3779B9)
+            + np.uint64(salt)
+        ) & np.uint64(0xFFFFFFFF)
+        value ^= value >> np.uint64(16)
+        value = (value * np.uint64(0x7FEB352D)) & np.uint64(0xFFFFFFFF)
+        value ^= value >> np.uint64(15)
+        value = (value * np.uint64(0x846CA68B)) & np.uint64(0xFFFFFFFF)
+        value ^= value >> np.uint64(16)
+        return (value.astype(np.float64) + 0.5) / 4294967296.0
+
+    return (uniform(0xA511E9B3) - uniform(0x63D83595)).astype(np.float32)
 
 
 def save_image(
@@ -1238,10 +1774,38 @@ def save_image(
     meta: dict[str, Any],
     jpeg_quality: int = 95,
     png_compress: int = 6,
+    png_bit_depth: int = 8,
+    png_dither: str = "none",
 ) -> None:
     require_supported(path)
+    suffix = path.suffix.lower()
+    if png_bit_depth not in {8, 16}:
+        raise ValueError("PNG bit depth must be 8 or 16.")
+    if png_dither not in PNG_DITHER_MODES:
+        raise ValueError("PNG dither must be none or tpdf.")
+    if suffix in {".jpg", ".jpeg"} and (png_bit_depth != 8 or png_dither != "none"):
+        raise ValueError("png_bit_depth and png_dither apply only to PNG output.")
+    if png_bit_depth == 16 and png_dither != "none":
+        raise ValueError("TPDF dithering is only supported for 8-bit PNG output.")
+    if suffix == ".png" and png_bit_depth == 16:
+        rgb16 = np.rint(np.clip(rgb, 0.0, 1.0) * 65535.0).astype(np.uint16)
+        alpha16 = (
+            None
+            if alpha is None
+            else np.rint(np.clip(alpha, 0.0, 1.0) * 65535.0).astype(np.uint16)
+        )
+        write_png16(path, rgb16, alpha16, meta, compression=png_compress)
+        return
+
+    quantization_input = np.clip(rgb, 0.0, 1.0)
+    if suffix == ".png" and png_dither == "tpdf":
+        quantization_input = np.clip(
+            quantization_input + deterministic_tpdf(quantization_input.shape) / 255.0,
+            0.0,
+            1.0,
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
-    rgb8 = np.rint(np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
+    rgb8 = np.rint(quantization_input * 255.0).astype(np.uint8)
     if alpha is not None and path.suffix.lower() == ".png":
         alpha8 = np.rint(np.clip(alpha, 0.0, 1.0) * 255.0).astype(np.uint8)
         image = Image.fromarray(np.concatenate([rgb8, alpha8], axis=2), "RGBA")
@@ -1256,7 +1820,7 @@ def save_image(
     if meta.get("dpi"):
         common["dpi"] = meta["dpi"]
 
-    if path.suffix.lower() in {".jpg", ".jpeg"}:
+    if suffix in {".jpg", ".jpeg"}:
         if alpha is not None:
             raise ValueError("Cannot preserve alpha in JPEG; use a PNG output path.")
         image.save(
@@ -1287,20 +1851,51 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
     require_supported(output)
     if source == output:
         raise ValueError("Refusing to overwrite the original image.")
-    rgb, alpha, meta = load_image(source)
+    output_is_png = output.suffix.lower() == ".png"
+    if not output_is_png and (settings.png_bit_depth != 8 or settings.png_dither != "none"):
+        raise ValueError("png_bit_depth and png_dither require a PNG output path.")
+    if settings.png_bit_depth == 16 and not output_is_png:
+        raise ValueError("16-bit output is supported only for PNG.")
+    if settings.png_dither == "tpdf" and (not output_is_png or settings.png_bit_depth != 8):
+        raise ValueError("TPDF dithering requires 8-bit PNG output.")
+    strict_color = (
+        settings.rendering != "legacy"
+        or settings.gamut_mapping != "clip"
+        or settings.png_bit_depth == 16
+    )
+    rgb, alpha, meta = load_image(
+        source,
+        strict_color_management=strict_color,
+        preserve_png16=settings.png_bit_depth == 16,
+    )
     before = image_metrics(rgb, alpha)
-    graded = grade_pixels(rgb, settings)
-    save_image(output, graded, alpha, meta, settings.jpeg_quality, settings.png_compress)
-    check_rgb, check_alpha, check_meta = load_image(output)
+    diagnostics: dict[str, Any] = {}
+    graded = grade_pixels(rgb, settings, diagnostics)
+    save_image(
+        output,
+        graded,
+        alpha,
+        meta,
+        settings.jpeg_quality,
+        settings.png_compress,
+        settings.png_bit_depth,
+        settings.png_dither,
+    )
+    check_rgb, check_alpha, check_meta = load_image(
+        output,
+        preserve_png16=output_is_png and settings.png_bit_depth == 16,
+    )
     if meta["size"] != check_meta["size"]:
         output.unlink(missing_ok=True)
         raise RuntimeError("Output dimensions changed; output was removed.")
     if bool(alpha is not None) != bool(check_alpha is not None):
         output.unlink(missing_ok=True)
         raise RuntimeError("Output alpha presence changed; output was removed.")
+    alpha_scale = 65535.0 if output_is_png and settings.png_bit_depth == 16 else 255.0
+    alpha_dtype = np.uint16 if alpha_scale == 65535.0 else np.uint8
     if alpha is not None and not np.array_equal(
-        np.rint(alpha * 255.0).astype(np.uint8),
-        np.rint(check_alpha * 255.0).astype(np.uint8),
+        np.rint(alpha * alpha_scale).astype(alpha_dtype),
+        np.rint(check_alpha * alpha_scale).astype(alpha_dtype),
     ):
         output.unlink(missing_ok=True)
         raise RuntimeError("Output alpha values changed; output was removed.")
@@ -1323,7 +1918,33 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
                 if settings.channel_curves.get(channel) is not None
             ],
         },
+        "output_encoding": {
+            "format": check_meta["format"],
+            "source_bit_depth": meta["source_bit_depth"],
+            "output_bit_depth": check_meta["source_bit_depth"],
+            "png_dither": settings.png_dither if output_is_png else "not_applicable",
+            "icc_input_status": meta["icc_status"],
+            "icc_output": "srgb" if meta.get("icc_profile") else "none",
+            "libraries": runtime_versions(),
+        },
     }
+    if strict_color or diagnostics.get("gamut_mapping_stages"):
+        stages = diagnostics.get("gamut_mapping_stages", [])
+        result["processing"]["color_management"] = {
+            "rendering": settings.rendering,
+            "working_space": "oklab_oklch_d65_srgb" if settings.rendering == "perceptual" else "legacy_srgb_hsv",
+            "gamut_mapping": settings.gamut_mapping,
+            "gamut_mapping_stages": stages,
+            "out_of_gamut_ratio_before": max(
+                (stage["out_of_gamut_ratio_before"] for stage in stages),
+                default=0.0,
+            ),
+            "out_of_gamut_ratio_after": (
+                stages[-1]["out_of_gamut_ratio_after"] if stages else 0.0
+            ),
+        }
+    if meta["warnings"]:
+        result["warnings"] = list(meta["warnings"])
     active_global_presence = [
         name
         for name in ("dehaze", "clarity", "texture")
@@ -1392,6 +2013,13 @@ def compare_images(original: Path, graded: Path) -> dict[str, Any]:
         "original": first,
         "graded": second,
         "rgb_channel_difference": channel_difference,
+        "output_encoding_difference": {
+            "original_bit_depth": first["bit_depth"],
+            "graded_bit_depth": second["bit_depth"],
+            "same_bit_depth": first["bit_depth"] == second["bit_depth"],
+            "original_icc_status": first["color_management"]["icc_status"],
+            "graded_icc_status": second["color_management"]["icc_status"],
+        },
         "checks": {
             "same_geometry": same_geometry,
             "same_alpha_presence": same_alpha,

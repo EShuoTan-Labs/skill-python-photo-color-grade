@@ -397,7 +397,7 @@ README 将高光、阴影、白色、黑色描述成顺序阶段，但代码实�
 - 视觉验收：在 1536×772 的代表性水下照片上完成 analyze/grade/compare、全尺寸重开和全强度/局部羽化检查；全强度动态范围由 `0.21099` 增至 `0.24052`，阴影裁切保持 `0`，高光裁切仅在已有反光处由 `0.000097` 增至 `0.000381`，RGB 64-bin 直方图均归一化为 1。另用确定性天空/近似肤色/叶片纹理/建筑阶跃/雾化渐变诊断图检查，未见明显 halo、塑料质感、色相折断、结构化噪声或蒙版 seam；全强度合成阶跃额外过冲/欠冲不超过 `0.02`。
 - 遗留问题：本阶段无已知功能缺口；高强度 presence 仍应按 `SKILL.md` 在天空、皮肤、细密纹理和高反差边缘进行全尺寸人工复核。未提前实现感知色彩、色域压缩、高位深输出或后续阶段能力。
 
-### 阶段 4：感知色彩、色域保护与高位深输出
+### 阶段 4：感知色彩、色域保护与高位深输出（已完成）
 
 涉及文件：
 
@@ -454,6 +454,16 @@ README 将高光、阴影、白色、黑色描述成顺序阶段，但代码实�
 - 人工检查高饱和花朵、霓虹、肤色、蓝天和长渐变，确认无可见色相折断、色域边缘断层或结构化抖动纹理。
 - 任一元数据/alpha 丢失、16 位实际写成 8 位、ICC 状态不明确或旧结果变化时停止。
 - 建议独立提交：`增加感知色彩色域保护与高位深 PNG`。
+
+#### 阶段 4 交接记录（2026-08-26）
+
+- 实现范围：`schema_version: 1` 新增可选 `parameters.color_management.rendering/gamut_mapping` 与 `parameters.output.png_bit_depth/png_dither`。感知路径以固定 D65 sRGB↔XYZ↔OKLab/OKLCh 变换处理全局及局部 vibrance/saturation、HSL 和三向调色；`oklch_compress` 在全局颜色阶段后和最终局部调整后执行。新增独立 `scripts/png16.py`，使用 PyPNG 读写 RGB16/RGBA16，并保留当前承诺的 ICC、EXIF、DPI 与 PNG 文本。
+- 关键决定：默认 `legacy/clip + 8-bit + none` 完全跳过新颜色与量化路径。色域压缩使用固定 `C=0.10` 软拐点、`0.08` 肩部和 24 次逐像素色度二分搜索，并按 262,144 像素分块控制临时内存；该固定响应避免把 sRGB 非凸蓝色边缘显露成轮廓。LittleCMS 生成的 sRGB ICC 头部时间戳被规范化，保证跨 CLI 进程编码确定性。16 位非 sRGB/无效 ICC 输入按计划在写入前拒绝，CMYK 严格路径从原 CMYK 模式进入 ICC 变换。
+- 修改文件：`scripts/photo_grade.py`、`scripts/png16.py`、`references/parameters.md`、`SKILL.md`、`README.md`、`requirements.txt`、`requirements-dev.txt`、`tests/test_color_management.py`、`tests/test_png16.py`、`tests/test_metadata.py`、`.github/workflows/publish-skill.yml` 和本交接记录。`agents/openai.yaml` 与图标不受接口和调用策略影响，按计划未修改。
+- 验证：修改前基线 `pytest` 91 项通过；最终 `pytest` 117 项全部通过，覆盖 OKLab 往返、中性轴、感知色彩、HSL `+1.5`、蓝色色域 cusp 连续性、随机越界色、schema 边界/无效值、CLI 预写入失败、16 位 RGB/RGBA 样本、8→16 alpha 精确扩展、16 位源样本回归、ICC/EXIF/DPI/文本、CMYK 原模式、非法 ICC、TPDF 偏差/平台/确定性和旧像素回归。`compileall`、`pip check`、CLI smoke、`git diff --check` 及 UTF-8 模式 Skill `quick_validate.py` 通过。
+- 兼容结果：旧 `grade_pixels` 浮点哈希、8 位 PNG 解码像素和旧报告子树保持逐像素一致；旧 schema、命令、参数、退出码和既有字段类型不变。新报告只加法增加位深、ICC、色域映射、库版本与可选 warning。Pillow 与 PyPNG 均可独立重开 16 位输出，IHDR、报告与独立解码均确认每通道 16 位；尺寸与 alpha 检查通过。
+- 视觉验收：在 1536×772 水下实际照片上完成 analyze→grade→compare、全尺寸与 100% 主体/肤色/水体检查；以确定性的全色相高饱和场、蓝天长渐变、肤色渐变和霓虹带补足场景覆盖。初次视觉检查发现蓝色色域边缘楔形轮廓，修正软拐点后新增回归测试；最终诊断图最大相邻 RGB 距离为 `0.00726`，无可见色相折断、色域边缘断层、结构化抖动、banding 或异常肤色污染。最终色域外比例为 `0`，RGB 64-bin 直方图各通道和为 `1`；TPDF 重复输出逐字节一致，平均量化偏差和最长平台满足测试阈值。
+- 遗留问题：本阶段无已知功能缺口。PyPNG 16 位编码与 OKLCh 二分搜索相对 8 位旧路径更慢，属于显式新功能的预期成本；任意非 sRGB ICC 的全精度 16 位输入仍需外部转换，未扩张到阶段 5 或后续范围。
 
 ### 阶段 5：RGB 原色校准与 3D LUT
 

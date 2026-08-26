@@ -26,6 +26,8 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 - Enable denoise or sharpening only when technically justified or requested; keep both conservative.
 - Use dehaze only for visible atmospheric veiling or compressed low-frequency separation. Use clarity for mid-scale structure and texture for fine coherent detail; do not treat the three controls as interchangeable strength layers.
 - Localize clarity or texture when the scene benefits from selective structure. Keep dehaze global because local low-frequency estimation can create boundary mismatch.
+- Keep legacy color rendering for restrained work where exact compatibility matters. Use the perceptual path when strong chroma, HSL, or split-color moves need more stable hue and color separation; pair it with gamut compression when the intended palette approaches the sRGB boundary.
+- Choose 16-bit PNG when retaining a 16-bit sRGB PNG source, delivering a high-precision intermediate, or protecting newly shaped gradients from an additional 8-bit quantization. It cannot recover precision already absent from an 8-bit source. For an 8-bit PNG delivery with long smooth gradients, deterministic dithering may reduce visible banding.
 
 ## Workflow
 
@@ -44,6 +46,8 @@ Assess exposure, clipping, dynamic range, measurable cast, saturation, noise, so
 - subject/background separation available through luminance, hue, saturation, or temperature;
 - negative space that can frame the focal region;
 - the most ambitious non-generative tonal transformation the source can support.
+
+Also note the reported source bit depth and ICC state. A strict perceptual or high-bit-depth render must fail with an actionable error if its ICC conversion cannot be established; do not silently fall back to unmanaged color.
 
 ### 2. Design a distinct style set
 
@@ -86,6 +90,8 @@ Name each file `<original-stem>_<style-id><intensity>_<direction-description><ex
 Each successful `grade` call has already reopened the encoded output, rejected any dimension or alpha change, and returned source/output metrics as `before` and `after`. Use that report for the routine metric comparison; do not rerun `compare` for an output created by the same call. Only when auditing an existing output whose original report is unavailable, run `python3 <skill-dir>/scripts/photo_grade.py compare <input> <output> --pretty`.
 
 Reopen and visually inspect every rendered image. Use `before` and `after` to detect unexpected clipping or tonal damage, then judge its visual extent and purpose. Check color integrity, skin and neutral colors when present, banding, halos, noise smearing, oversharpening, and broad crushed regions. When presence controls are active, inspect skies and skin for noise amplification, foliage and fine texture for brittle detail, building and horizon edges for bright/dark halos, and backlit haze for unnatural black or color recovery. Do not spend visual review on dimensions, alpha, or geometry: the pipeline exposes no geometric transforms and `grade` enforces those invariants.
+
+When perceptual rendering or gamut compression is active, inspect saturated flowers, neon, skin, blue sky, and colored highlights for hue breaks, flattened color layers, or a visible gamut-edge contour; confirm the report's final out-of-gamut ratio is zero. When 16-bit PNG is selected, confirm the report and IHDR both say 16-bit and reopen through the available independent decoder. For 8-bit dithering, inspect smooth skies and gradients at 100% for both banding and structured dither texture.
 
 Check every predeclared success criterion. For creative and bold results, confirm the tonal hierarchy remains purposeful in grayscale and level `3` reads as authored without a side-by-side comparison. Reject a bold result if it remains uniformly safe, differs mainly by palette, or reads as a generic vignette. Inspect all delivered variants together and redesign any pair separated only by cosmetic differences.
 
