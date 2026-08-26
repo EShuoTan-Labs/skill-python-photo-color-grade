@@ -101,6 +101,72 @@ def test_png_alpha_is_preserved_exactly(tmp_path: Path) -> None:
     assert np.array_equal(np.asarray(Image.open(source))[..., 3], np.asarray(Image.open(output))[..., 3])
 
 
+def test_composite_mask_cli_is_deterministic_and_preserves_alpha(tmp_path: Path) -> None:
+    source, output, recipe_path = write_inputs(tmp_path, ".png", alpha=True)
+    second_output = tmp_path / "output-second.png"
+    mask_tree = {
+        "type": "composite",
+        "operation": "and",
+        "inputs": [
+            {
+                "type": "luminance",
+                "min": 0.2,
+                "max": 0.9,
+                "feather": 0.12,
+                "opacity": 1,
+                "invert": False,
+            },
+            {
+                "type": "radial",
+                "center": [0.55, 0.48],
+                "radius": [0.42, 0.38],
+                "feather": 0.5,
+                "opacity": 0.85,
+                "invert": False,
+            },
+        ],
+        "opacity": 0.75,
+        "invert": False,
+    }
+    recipe_path.write_text(
+        json.dumps(
+            recipe(
+                {
+                    "local_adjustments": [
+                        {"mask": mask_tree, "adjustments": {"exposure": 0.3, "contrast": 0.1}}
+                    ]
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    first = run_cli(
+        "grade",
+        str(source),
+        str(output),
+        "--recipe",
+        str(recipe_path),
+        "--show-parameters",
+        "--skip-update-check",
+    )
+    second = run_cli(
+        "grade",
+        str(source),
+        str(second_output),
+        "--recipe",
+        str(recipe_path),
+        "--skip-update-check",
+    )
+
+    assert first.returncode == second.returncode == 0
+    assert output.read_bytes() == second_output.read_bytes()
+    assert json.loads(first.stdout)["parameters"]["local_adjustments"][0]["mask"] == mask_tree
+    source_alpha = np.asarray(Image.open(source))[..., 3]
+    assert np.array_equal(source_alpha, np.asarray(Image.open(output))[..., 3])
+    assert np.array_equal(source_alpha, np.asarray(Image.open(second_output))[..., 3])
+
+
 @pytest.mark.parametrize(
     "channel_curves",
     [
@@ -128,9 +194,87 @@ def test_invalid_recipe_exits_two_before_writing_output(tmp_path: Path, channel_
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    "mask_tree",
+    [
+        {
+            "type": "composite",
+            "operation": "and",
+            "inputs": [],
+            "opacity": 1,
+            "invert": False,
+        },
+        {
+            "type": "composite",
+            "operation": "subtract",
+            "inputs": [
+                {
+                    "type": "linear",
+                    "start": [0, 0],
+                    "end": [1, 1],
+                    "opacity": 1,
+                    "invert": False,
+                }
+            ],
+            "opacity": 1,
+            "invert": False,
+        },
+        {
+            "type": "composite",
+            "operation": "xor",
+            "inputs": [
+                {
+                    "type": "linear",
+                    "start": [0, 0],
+                    "end": [1, 1],
+                    "opacity": 1,
+                    "invert": False,
+                },
+                {
+                    "type": "radial",
+                    "center": [0.5, 0.5],
+                    "radius": [0.4, 0.4],
+                    "feather": 0.5,
+                    "opacity": 1,
+                    "invert": False,
+                },
+            ],
+            "opacity": 1,
+            "invert": False,
+        },
+    ],
+)
+def test_invalid_composite_tree_exits_two_before_writing_output(tmp_path: Path, mask_tree: dict) -> None:
+    source, output, recipe_path = write_inputs(tmp_path, ".png")
+    recipe_path.write_text(
+        json.dumps(
+            recipe(
+                {
+                    "local_adjustments": [
+                        {"mask": mask_tree, "adjustments": {"exposure": 0.2}}
+                    ]
+                }
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    completed = run_cli(
+        "grade",
+        str(source),
+        str(output),
+        "--recipe",
+        str(recipe_path),
+        "--skip-update-check",
+    )
+
+    assert completed.returncode == 2
+    assert completed.stderr.startswith("error: ")
+    assert not output.exists()
+
+
 @pytest.mark.parametrize("command", [(), ("analyze", "--help"), ("grade", "--help"), ("compare", "--help")])
 def test_existing_help_commands_remain_available(command: tuple[str, ...]) -> None:
     completed = run_cli(*command, "--help") if not command else run_cli(*command)
     assert completed.returncode == 0
     assert "usage:" in completed.stdout
-

@@ -53,6 +53,9 @@ BASIC_FIELD_ORDER = (
 BASIC_FIELDS = set(BASIC_FIELD_ORDER)
 CHANNEL_NAMES = ("red", "green", "blue")
 LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve", "channel_curves"}
+COMPOSITE_MASK_OPERATIONS = {"and", "or", "subtract"}
+MAX_MASK_DEPTH = 6
+MAX_MASK_LEAVES = 32
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -152,6 +155,67 @@ def validate_coordinate_pair(value: Any, label: str, low: float = 0.0, high: flo
     ]
 
 
+def validate_mask_specification(value: Any, label: str, depth: int = 1) -> int:
+    """Validate one mask tree and return its leaf count."""
+    if depth > MAX_MASK_DEPTH:
+        raise ValueError(f"{label} exceeds the maximum mask depth of {MAX_MASK_DEPTH}.")
+    mask = require_object(value, label)
+    mask_type = mask.get("type")
+    common = {"type", "opacity", "invert"}
+    if mask_type == "luminance":
+        require_exact_keys(mask, common | {"min", "max", "feather"}, label)
+        minimum = require_number(mask["min"], f"{label}.min", 0.0, 1.0)
+        maximum = require_number(mask["max"], f"{label}.max", 0.0, 1.0)
+        if maximum <= minimum:
+            raise ValueError(f"{label}.max must be greater than min.")
+        require_number(mask["feather"], f"{label}.feather", 0.0001, 1.0)
+        leaf_count = 1
+    elif mask_type == "color":
+        require_exact_keys(mask, common | {"hue", "width", "min_saturation"}, label)
+        require_number(mask["hue"], f"{label}.hue", 0.0, 360.0)
+        require_number(mask["width"], f"{label}.width", 1.0, 180.0)
+        require_number(mask["min_saturation"], f"{label}.min_saturation", 0.0, 1.0)
+        leaf_count = 1
+    elif mask_type == "linear":
+        require_exact_keys(mask, common | {"start", "end"}, label)
+        start = validate_coordinate_pair(mask["start"], f"{label}.start")
+        end = validate_coordinate_pair(mask["end"], f"{label}.end")
+        if start == end:
+            raise ValueError(f"{label} start and end must differ.")
+        leaf_count = 1
+    elif mask_type == "radial":
+        require_exact_keys(mask, common | {"center", "radius", "feather"}, label)
+        validate_coordinate_pair(mask["center"], f"{label}.center")
+        validate_coordinate_pair(mask["radius"], f"{label}.radius", 0.0001, 1.0)
+        require_number(mask["feather"], f"{label}.feather", 0.0, 0.99)
+        leaf_count = 1
+    elif mask_type == "composite":
+        require_exact_keys(mask, common | {"operation", "inputs"}, label)
+        operation = mask["operation"]
+        if not isinstance(operation, str) or operation not in COMPOSITE_MASK_OPERATIONS:
+            raise ValueError(f"{label}.operation must be one of: and, or, subtract.")
+        inputs = mask["inputs"]
+        if not isinstance(inputs, list):
+            raise ValueError(f"{label}.inputs must be an array.")
+        expected = 2 if operation == "subtract" else None
+        if expected is not None and len(inputs) != expected:
+            raise ValueError(f"{label}.inputs must contain exactly two masks for subtract.")
+        if operation in {"and", "or"} and not 2 <= len(inputs) <= 8:
+            raise ValueError(f"{label}.inputs must contain between 2 and 8 masks for {operation}.")
+        leaf_count = 0
+        for index, child in enumerate(inputs):
+            leaf_count += validate_mask_specification(child, f"{label}.inputs[{index}]", depth + 1)
+            if leaf_count > MAX_MASK_LEAVES:
+                raise ValueError(f"{label} exceeds the maximum of {MAX_MASK_LEAVES} leaf masks.")
+    else:
+        raise ValueError(f"{label}.type must be luminance, color, linear, radial, or composite.")
+
+    require_number(mask["opacity"], f"{label}.opacity", 0.0, 1.0)
+    if not isinstance(mask["invert"], bool):
+        raise ValueError(f"{label}.invert must be true or false.")
+    return leaf_count
+
+
 def validate_local_adjustments(value: Any, label: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ValueError(f"{label} must be an array.")
@@ -161,36 +225,7 @@ def validate_local_adjustments(value: Any, label: str) -> list[dict[str, Any]]:
         item = require_object(item_value, item_label)
         require_exact_keys(item, {"mask", "adjustments"}, item_label)
         mask = require_object(item["mask"], f"{item_label}.mask")
-        mask_type = mask.get("type")
-        common = {"type", "opacity", "invert"}
-        if mask_type == "luminance":
-            require_exact_keys(mask, common | {"min", "max", "feather"}, f"{item_label}.mask")
-            minimum = require_number(mask["min"], f"{item_label}.mask.min", 0.0, 1.0)
-            maximum = require_number(mask["max"], f"{item_label}.mask.max", 0.0, 1.0)
-            if maximum <= minimum:
-                raise ValueError(f"{item_label}.mask.max must be greater than min.")
-            require_number(mask["feather"], f"{item_label}.mask.feather", 0.0001, 1.0)
-        elif mask_type == "color":
-            require_exact_keys(mask, common | {"hue", "width", "min_saturation"}, f"{item_label}.mask")
-            require_number(mask["hue"], f"{item_label}.mask.hue", 0.0, 360.0)
-            require_number(mask["width"], f"{item_label}.mask.width", 1.0, 180.0)
-            require_number(mask["min_saturation"], f"{item_label}.mask.min_saturation", 0.0, 1.0)
-        elif mask_type == "linear":
-            require_exact_keys(mask, common | {"start", "end"}, f"{item_label}.mask")
-            start = validate_coordinate_pair(mask["start"], f"{item_label}.mask.start")
-            end = validate_coordinate_pair(mask["end"], f"{item_label}.mask.end")
-            if start == end:
-                raise ValueError(f"{item_label}.mask start and end must differ.")
-        elif mask_type == "radial":
-            require_exact_keys(mask, common | {"center", "radius", "feather"}, f"{item_label}.mask")
-            validate_coordinate_pair(mask["center"], f"{item_label}.mask.center")
-            validate_coordinate_pair(mask["radius"], f"{item_label}.mask.radius", 0.0001, 1.0)
-            require_number(mask["feather"], f"{item_label}.mask.feather", 0.0, 0.99)
-        else:
-            raise ValueError(f"{item_label}.mask.type must be luminance, color, linear, or radial.")
-        require_number(mask["opacity"], f"{item_label}.mask.opacity", 0.0, 1.0)
-        if not isinstance(mask["invert"], bool):
-            raise ValueError(f"{item_label}.mask.invert must be true or false.")
+        validate_mask_specification(mask, f"{item_label}.mask")
 
         adjustments = require_object(item["adjustments"], f"{item_label}.adjustments")
         if not adjustments:
@@ -810,13 +845,31 @@ def local_parameters(adjustments: dict[str, Any]) -> SimpleNamespace:
     return SimpleNamespace(**values)
 
 
-def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarray:
-    height, width = rgb.shape[:2]
-    yy, xx = np.mgrid[0:height, 0:width]
-    x = xx.astype(np.float32) / max(width - 1, 1)
-    y = yy.astype(np.float32) / max(height - 1, 1)
+def finalize_local_mask(mask: np.ndarray, specification: dict[str, Any]) -> np.ndarray:
+    if not np.all(np.isfinite(mask)):
+        raise ValueError("Local mask produced non-finite coverage values.")
+    if specification.get("invert", False):
+        mask = 1.0 - mask
+    opacity = float(np.clip(specification.get("opacity", 1.0), 0.0, 1.0))
+    result = np.clip(mask * opacity, 0.0, 1.0)
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Local mask produced non-finite coverage values.")
+    return result
+
+
+def _build_local_mask(
+    rgb: np.ndarray,
+    specification: dict[str, Any],
+    x: np.ndarray,
+    y: np.ndarray,
+    depth: int,
+    leaf_counter: list[int],
+) -> np.ndarray:
+    if depth > MAX_MASK_DEPTH:
+        raise ValueError(f"Local mask exceeds the maximum mask depth of {MAX_MASK_DEPTH}.")
     mask_type = specification.get("type")
     if mask_type == "luminance":
+        leaf_counter[0] += 1
         luma = np.clip(rgb @ LUMA, 0.0, 1.0)
         low = float(specification.get("min", 0.0))
         high = float(specification.get("max", 1.0))
@@ -824,6 +877,7 @@ def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarr
         mask = smoothstep(low - feather, low + feather, luma)
         mask *= 1.0 - smoothstep(high - feather, high + feather, luma)
     elif mask_type == "color":
+        leaf_counter[0] += 1
         hue, sat, _ = rgb_hsv_components(np.clip(rgb, 0.0, 1.0))
         center = float(specification.get("hue", 0.0))
         width_degrees = max(float(specification.get("width", 30.0)), 1.0)
@@ -831,6 +885,7 @@ def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarr
         mask = circular_hue_weight(hue, center, width_degrees)
         mask *= smoothstep(minimum_sat, min(minimum_sat + 0.2, 1.0), sat)
     elif mask_type == "linear":
+        leaf_counter[0] += 1
         start = specification.get("start", [0.0, 0.0])
         end = specification.get("end", [1.0, 1.0])
         sx, sy = float(start[0]), float(start[1])
@@ -842,6 +897,7 @@ def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarr
         projection = ((x - sx) * dx + (y - sy) * dy) / length_squared
         mask = smoothstep(0.0, 1.0, projection)
     elif mask_type == "radial":
+        leaf_counter[0] += 1
         center = specification.get("center", [0.5, 0.5])
         radius = specification.get("radius", [0.35, 0.35])
         cx, cy = float(center[0]), float(center[1])
@@ -849,12 +905,50 @@ def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarr
         distance = np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)
         feather = float(np.clip(specification.get("feather", 0.35), 0.0, 0.99))
         mask = 1.0 - smoothstep(1.0 - feather, 1.0, distance)
+    elif mask_type == "composite":
+        operation = specification.get("operation")
+        inputs = specification.get("inputs")
+        if (
+            not isinstance(operation, str)
+            or operation not in COMPOSITE_MASK_OPERATIONS
+            or not isinstance(inputs, list)
+        ):
+            raise ValueError("Composite mask requires a valid operation and inputs array.")
+        if operation == "and":
+            if not 2 <= len(inputs) <= 8:
+                raise ValueError("Composite and mask requires between 2 and 8 inputs.")
+        elif operation == "or":
+            if not 2 <= len(inputs) <= 8:
+                raise ValueError("Composite or mask requires between 2 and 8 inputs.")
+        elif len(inputs) != 2:
+            raise ValueError("Composite subtract mask requires exactly two inputs.")
+        child_masks = [
+            _build_local_mask(rgb, child, x, y, depth + 1, leaf_counter)
+            for child in inputs
+        ]
+        if operation == "and":
+            mask = child_masks[0]
+            for child_mask in child_masks[1:]:
+                mask = np.minimum(mask, child_mask)
+        elif operation == "or":
+            mask = child_masks[0]
+            for child_mask in child_masks[1:]:
+                mask = np.maximum(mask, child_mask)
+        else:
+            mask = np.clip(child_masks[0] - child_masks[1], 0.0, 1.0)
     else:
-        raise ValueError("Local mask type must be luminance, color, linear, or radial.")
-    if specification.get("invert", False):
-        mask = 1.0 - mask
-    opacity = float(np.clip(specification.get("opacity", 1.0), 0.0, 1.0))
-    return np.clip(mask * opacity, 0.0, 1.0)
+        raise ValueError("Local mask type must be luminance, color, linear, radial, or composite.")
+    if leaf_counter[0] > MAX_MASK_LEAVES:
+        raise ValueError(f"Local mask exceeds the maximum of {MAX_MASK_LEAVES} leaf masks.")
+    return finalize_local_mask(mask, specification)
+
+
+def build_local_mask(rgb: np.ndarray, specification: dict[str, Any]) -> np.ndarray:
+    height, width = rgb.shape[:2]
+    yy, xx = np.mgrid[0:height, 0:width]
+    x = xx.astype(np.float32) / max(width - 1, 1)
+    y = yy.astype(np.float32) / max(height - 1, 1)
+    return _build_local_mask(rgb, specification, x, y, depth=1, leaf_counter=[0])
 
 
 def apply_local_adjustments(rgb: np.ndarray, payload: Any) -> np.ndarray:

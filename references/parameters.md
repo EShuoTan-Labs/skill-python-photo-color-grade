@@ -195,7 +195,7 @@ Embed the same mask-item schema in one of two recipe arrays. Each array item con
 - `local_corrections`: apply after global tone/curve and before vibrance, saturation, HSL, and color grading. Use for local exposure, white-balance, tonal, or corrective color work.
 - `local_adjustments`: apply after HSL and color grading. Use for final creative dodge, burn, or color accents.
 
-Place each mask in one stage according to its purpose. Every mask requires `type`, `opacity` from `0` to `1`, and boolean `invert`, plus exactly the fields for its type:
+Place each mask in one stage according to its purpose. Every mask node requires `type`, `opacity` from `0` to `1`, and boolean `invert`; these fields have no implicit recipe defaults and must be present. Each node accepts exactly the fields listed for its type:
 
 | Mask type | Required type-specific fields |
 |---|---|
@@ -203,6 +203,48 @@ Place each mask in one stage according to its purpose. Every mask requires `type
 | `color` | `hue` from `0` to `360`; `width` from `1` to `180`; `min_saturation` from `0` to `1` |
 | `linear` | distinct `start: [x,y]` and `end: [x,y]`, with every coordinate from `0` to `1` |
 | `radial` | `center: [x,y]` from `0` to `1`; `radius: [rx,ry]` from `0.0001` to `1`; `feather` from `0` to `0.99` |
+| `composite` | `operation`: `"and"`, `"or"`, or `"subtract"`; `inputs`: an array of child mask nodes |
+
+A composite mask combines already feathered mask coverage without semantic segmentation or a second feathering pass. Its deterministic operations are:
+
+- `and`: pixel-wise `min` over `2–8` child masks.
+- `or`: pixel-wise `max` over `2–8` child masks.
+- `subtract`: exactly two child masks, evaluated as `clip(A - B, 0, 1)`; subtraction is directional, and additional subtraction requires explicit nesting.
+
+Processing is post-order and fixed. Each leaf computes coverage from the same RGB snapshot for that local-adjustment item, then applies its own `invert` followed by `opacity`. A composite combines those completed child coverages, then applies the composite node's own `invert` followed by `opacity`. Sibling masks never observe one another's adjustments. Separate items in `local_corrections` or `local_adjustments` remain sequential, so a later item reads the result of the preceding item.
+
+A mask tree may contain at most `6` node levels, counting its root as level `1`, and at most `32` leaf masks. The leaf limit applies independently to each local-adjustment item's root mask. Composite nodes do not accept `feather`; feathering remains an explicit property of eligible leaf nodes. Every node is checked for finite coverage in `[0,1]` after its own inversion and opacity.
+
+For example, this mask selects bright pixels only where they also lie inside a feathered radial region:
+
+```json
+{
+  "type": "composite",
+  "operation": "and",
+  "inputs": [
+    {
+      "type": "luminance",
+      "min": 0.55,
+      "max": 0.98,
+      "feather": 0.12,
+      "opacity": 1,
+      "invert": false
+    },
+    {
+      "type": "radial",
+      "center": [0.55, 0.45],
+      "radius": [0.35, 0.42],
+      "feather": 0.5,
+      "opacity": 1,
+      "invert": false
+    }
+  ],
+  "opacity": 0.8,
+  "invert": false
+}
+```
+
+To select a color range while excluding highlights, use `subtract` with the color mask as input `A` and the luminance mask as input `B`. Reversing the inputs produces a different mask.
 
 `adjustments` contains one or more basic-control names from above, `curve`, or `channel_curves`. Local `exposure` accepts `-4` to `+4`; other numeric adjustments accept `-1` to `+1`; local main and channel curves follow the curve rules above.
 
@@ -228,6 +270,8 @@ Place each mask in one stage according to its purpose. Every mask requires `type
 Use masks to implement photographic light design rather than semantic editing. For bold work, combine only the masks the scene needs, such as a broad linear burn to deepen an edge, a radial dodge placed over the existing focal region, or a luminance mask to control brilliant highlights. Keep feathering broad enough to avoid visible transitions. Do not add light that contradicts the source direction.
 
 For a directional concept, align linear masks with the observed bright-to-dark path and use radial masks only to refine focal emphasis. Inspect the result in color and mentally in monochrome. If removing color would reveal only a generic vignette, redesign the mask geometry.
+
+Validation is recursive. Unknown or missing node fields, unsupported operations, invalid child counts, excessive depth or leaf count, non-finite numbers, and out-of-range values are errors. The `grade` CLI reports them on stderr with exit code `2` before creating an output file.
 
 ## Detail and output
 
