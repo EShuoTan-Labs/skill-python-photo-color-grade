@@ -26,6 +26,7 @@ Apply these in order:
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
 - Deliver full-quality finals, not proofs, contact sheets, or reduced previews.
 - Block only when no valid output can be produced: missing, corrupt, undecodable, or unsupported input; a required dependency or permission failure; a script or color-conversion failure; insufficient resources; or irreconcilable instructions. Report the actionable cause instead of asking for an aesthetic choice.
+- If incomplete or ambiguous skill documentation forces you to inspect implementation code to proceed, finish the photo task when safe, then tell the user what was undocumented and what behavior you confirmed so the skill can be improved. Routine use should not require reading code.
 
 ## Boundaries
 
