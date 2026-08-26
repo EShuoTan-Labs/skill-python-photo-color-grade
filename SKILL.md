@@ -19,7 +19,7 @@ Apply these in order:
 ## Defaults and blockers
 
 - Start the first pass without asking the user to choose a style or understand controls.
-- For a broad request such as “调色” or “make this look better,” render three intensity-`3` finals: one faithful natural correction, one clearly creative scene-adaptive interpretation, and one bold editorial or cinematic interpretation. If a bold treatment would fight the source, replace it with a different strong but scene-faithful concept. Add a fourth direction only when the image supports a genuinely different and useful idea.
+- For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Always include one faithful natural correction, one clearly creative scene-adaptive interpretation, and one bold editorial or cinematic interpretation. If a bold treatment would fight the source, replace it with a different strong but scene-faithful concept. Add further directions only when each introduces a genuinely different and useful idea.
 - For a singular correction such as “提亮一点” or “修正白平衡,” render one faithful result unless the user requests alternatives.
 - Let explicit constraints replace only conflicting defaults. For example, “只要自然版” produces one natural result, “不要胶片” excludes film looks, and a named style or intensity narrows the set.
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
