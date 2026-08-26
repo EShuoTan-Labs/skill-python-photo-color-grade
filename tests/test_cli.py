@@ -22,6 +22,34 @@ def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_cli_without_pypng(*arguments: str) -> subprocess.CompletedProcess[str]:
+    script = str(SCRIPT)
+    argv = [script, *arguments]
+    bootstrap = f"""
+import builtins
+import runpy
+import sys
+
+real_import = builtins.__import__
+
+def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "png":
+        raise ModuleNotFoundError("No module named 'png'", name="png")
+    return real_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = blocked_import
+sys.argv = {argv!r}
+runpy.run_path({script!r}, run_name="__main__")
+"""
+    return subprocess.run(
+        [sys.executable, "-c", bootstrap],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def write_inputs(tmp_path: Path, suffix: str, alpha: bool = False) -> tuple[Path, Path, Path]:
     y, x = np.mgrid[0:18, 0:24]
     rgb = np.stack((x / 23, y / 17, (x + 2 * y) / 57), axis=2)
@@ -75,6 +103,13 @@ def test_analyze_grade_compare_json_extensions(tmp_path: Path, suffix: str) -> N
     compare_report = json.loads(compared.stdout)
     assert set(analyze_report["metrics"]["rgb_channels"]) == {"red", "green", "blue"}
     assert len(analyze_report["metrics"]["spatial_rgb_mean_grid_3x3"]) == 3
+    assert analyze_report["source_extension"] == suffix
+    assert analyze_report["detected_format"] == ("PNG" if suffix == ".png" else "JPEG")
+    assert analyze_report["extension_matches_format"] is True
+    assert analyze_report["recommended_extension"] == suffix
+    assert grade_report["output_format_conversion"] is None
+    assert grade_report["output_encoding"]["extension"] == suffix
+    assert grade_report["output_encoding"]["extension_matches_format"] is True
     assert grade_report["processing"] == {
         "curve_working_space": "encoded_srgb_[0,1]",
         "curve_interpolation": "piecewise_linear",
@@ -84,6 +119,175 @@ def test_analyze_grade_compare_json_extensions(tmp_path: Path, suffix: str) -> N
     assert grade_report["parameters"]["channel_curves"]["red"]
     assert set(compare_report["rgb_channel_difference"]) == {"red", "green", "blue"}
     assert compare_report["checks"]["passed"] is True
+
+
+def test_non_16bit_cli_commands_work_without_pypng(tmp_path: Path) -> None:
+    png_source, png_output, png_recipe = write_inputs(tmp_path, ".png")
+    jpg_source, jpg_output, jpg_recipe = write_inputs(tmp_path, ".jpg")
+
+    completed = [
+        run_cli_without_pypng("--help"),
+        run_cli_without_pypng("analyze", str(png_source)),
+        run_cli_without_pypng(
+            "grade",
+            str(png_source),
+            str(png_output),
+            "--recipe",
+            str(png_recipe),
+            "--skip-update-check",
+        ),
+        run_cli_without_pypng(
+            "grade",
+            str(jpg_source),
+            str(jpg_output),
+            "--recipe",
+            str(jpg_recipe),
+            "--skip-update-check",
+        ),
+        run_cli_without_pypng("compare", str(png_source), str(png_output)),
+    ]
+
+    assert all(result.returncode == 0 for result in completed), [
+        result.stderr for result in completed
+    ]
+    assert png_output.exists()
+    assert jpg_output.exists()
+
+
+def test_png16_output_without_pypng_fails_cleanly_before_writing(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    output = tmp_path / "output.png"
+    recipe_path = tmp_path / "recipe.json"
+    Image.new("RGB", (8, 6), (20, 40, 60)).save(source)
+    recipe_path.write_text(
+        json.dumps(recipe({"output": {"png_bit_depth": 16}})),
+        encoding="utf-8",
+    )
+
+    completed = run_cli_without_pypng(
+        "grade",
+        str(source),
+        str(output),
+        "--recipe",
+        str(recipe_path),
+        "--skip-update-check",
+    )
+
+    assert completed.returncode == 2
+    assert "16-bit PNG processing requires pypng" in completed.stderr
+    assert "pip install -r requirements.txt" in completed.stderr
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("payload_format", "source_suffix", "detected_format", "recommended_suffix"),
+    [
+        ("JPEG", ".png", "JPEG", ".jpg"),
+        ("PNG", ".jpg", "PNG", ".png"),
+    ],
+)
+def test_analyze_reports_mismatched_payload_and_extension(
+    tmp_path: Path,
+    payload_format: str,
+    source_suffix: str,
+    detected_format: str,
+    recommended_suffix: str,
+) -> None:
+    source = tmp_path / f"mislabeled{source_suffix}"
+    Image.new("RGB", (8, 6), (20, 40, 60)).save(source, format=payload_format)
+
+    completed = run_cli("analyze", str(source))
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["format"] == detected_format
+    assert report["source_extension"] == source_suffix
+    assert report["detected_format"] == detected_format
+    assert report["extension_matches_format"] is False
+    assert report["recommended_extension"] == recommended_suffix
+    assert source_suffix in report["warnings"][0]
+    assert detected_format in report["warnings"][0]
+
+
+def test_matching_jpeg_extension_is_preserved_as_recommendation(tmp_path: Path) -> None:
+    source = tmp_path / "matching.jpeg"
+    Image.new("RGB", (8, 6), (20, 40, 60)).save(source, format="JPEG")
+
+    completed = run_cli("analyze", str(source))
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["detected_format"] == "JPEG"
+    assert report["extension_matches_format"] is True
+    assert report["recommended_extension"] == ".jpeg"
+    assert "warnings" not in report
+
+
+def test_grade_mislabeled_source_with_normalized_extension_preserves_format(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "mislabeled.png"
+    output = tmp_path / "mislabeled_A3_test.jpg"
+    recipe_path = tmp_path / "recipe.json"
+    Image.new("RGB", (8, 6), (20, 40, 60)).save(source, format="JPEG")
+    recipe_path.write_text(json.dumps(recipe()), encoding="utf-8")
+
+    completed = run_cli(
+        "grade",
+        str(source),
+        str(output),
+        "--recipe",
+        str(recipe_path),
+        "--skip-update-check",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    with Image.open(output) as decoded:
+        assert decoded.format == "JPEG"
+    assert report["detected_format"] == "JPEG"
+    assert report["extension_matches_format"] is False
+    assert report["recommended_extension"] == ".jpg"
+    assert report["output_format_conversion"] is None
+    assert report["output_encoding"]["extension"] == ".jpg"
+    assert report["output_encoding"]["extension_matches_format"] is True
+
+
+def test_grade_explicit_format_conversion_is_reported(tmp_path: Path) -> None:
+    source = tmp_path / "mislabeled.png"
+    output = tmp_path / "mislabeled_A3_test.png"
+    recipe_path = tmp_path / "recipe.json"
+    Image.new("RGB", (8, 6), (20, 40, 60)).save(source, format="JPEG")
+    recipe_path.write_text(json.dumps(recipe()), encoding="utf-8")
+
+    completed = run_cli(
+        "grade",
+        str(source),
+        str(output),
+        "--recipe",
+        str(recipe_path),
+        "--skip-update-check",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    with Image.open(output) as decoded:
+        assert decoded.format == "PNG"
+    assert report["output_format_conversion"] == {"from": "JPEG", "to": "PNG"}
+    assert report["output_encoding"]["format"] == "PNG"
+    assert report["output_encoding"]["extension"] == ".png"
+    assert report["output_encoding"]["extension_matches_format"] is True
+    assert any("explicitly converts" in warning for warning in report["warnings"])
+
+
+def test_supported_extension_cannot_hide_unsupported_payload(tmp_path: Path) -> None:
+    source = tmp_path / "not-really-png.png"
+    Image.new("RGB", (8, 6), (20, 40, 60)).save(source, format="GIF")
+
+    completed = run_cli("analyze", str(source))
+
+    assert completed.returncode == 2
+    assert "Decoded payload format GIF is unsupported" in completed.stderr
 
 
 def test_png_alpha_is_preserved_exactly(tmp_path: Path) -> None:

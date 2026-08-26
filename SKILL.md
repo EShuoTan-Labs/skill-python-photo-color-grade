@@ -28,6 +28,7 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 - Localize clarity or texture when the scene benefits from selective structure. Keep dehaze global because local low-frequency estimation can create boundary mismatch.
 - Keep legacy color rendering for restrained work where exact compatibility matters. Use the perceptual path when strong chroma, HSL, or split-color moves need more stable hue and color separation; pair it with gamut compression when the intended palette approaches the sRGB boundary.
 - Choose 16-bit PNG when retaining a 16-bit sRGB PNG source, delivering a high-precision intermediate, or protecting newly shaped gradients from an additional 8-bit quantization. It cannot recover precision already absent from an 8-bit source. For an 8-bit PNG delivery with long smooth gradients, deterministic dithering may reduce visible banding.
+- Ordinary JPEG and 8-bit PNG work does not require PyPNG. Before selecting 16-bit PNG, ensure the pinned dependencies in `requirements.txt` are installed; if PyPNG is unavailable, keep unrelated work running and treat only the requested 16-bit operation as blocked.
 
 ## Workflow
 
@@ -48,6 +49,8 @@ Assess exposure, clipping, dynamic range, measurable cast, saturation, noise, so
 - the most ambitious non-generative tonal transformation the source can support.
 
 Also note the reported source bit depth and ICC state. A strict perceptual or high-bit-depth render must fail with an actionable error if its ICC conversion cannot be established; do not silently fall back to unmanaged color.
+
+Treat `detected_format` as authoritative. When `extension_matches_format` is false, preserve the detected format and use `recommended_extension` for output unless the user explicitly requested a format conversion.
 
 ### 2. Design a distinct style set
 
@@ -80,7 +83,7 @@ Let exactly one `grade` invocation perform the automatic update check; add `--sk
 
 Name each file `<original-stem>_<style-id><intensity>_<direction-description><extension>`, for example `IMG_1234_A3_自然通透.jpg`.
 
-- Preserve the source stem, extension, and format unless the user requests a different output format.
+- Preserve the source stem and decoder-detected format unless the user requests a different output format. Keep the original extension only when `extension_matches_format` is true; otherwise use `recommended_extension` (`.jpg` for a mismatched JPEG or `.png` for a mismatched PNG).
 - Use the recipe's uppercase ID and numeric intensity without a separator.
 - Use a concise Chinese direction name matching the actual recipe; keep names distinct across variants.
 - Remove line breaks and `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|` from the direction name. Do not add `_graded`, timestamps, or random IDs.

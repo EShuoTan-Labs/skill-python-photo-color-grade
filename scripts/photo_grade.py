@@ -26,7 +26,12 @@ if str(SCRIPT_DIR) not in sys.path:
 from png16 import chunk_types, inspect_ihdr, read_png16, write_png16
 
 
-SUPPORTED = {".jpg", ".jpeg", ".png"}
+FORMAT_EXTENSIONS = {
+    "JPEG": frozenset({".jpg", ".jpeg"}),
+    "PNG": frozenset({".png"}),
+}
+CANONICAL_EXTENSIONS = {"JPEG": ".jpg", "PNG": ".png"}
+SUPPORTED = set().union(*FORMAT_EXTENSIONS.values())
 LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
 HUE_CENTERS = {
     "red": 0.0,
@@ -513,6 +518,33 @@ def require_supported(path: Path) -> None:
         raise ValueError("Only JPEG and PNG are supported by this skill.")
 
 
+def require_detected_format(format_name: str | None) -> str:
+    detected_format = (format_name or "").upper()
+    if detected_format not in FORMAT_EXTENSIONS:
+        label = detected_format or "unknown"
+        raise ValueError(
+            f"Decoded payload format {label} is unsupported; only JPEG and PNG are supported by this skill."
+        )
+    return detected_format
+
+
+def extension_matches_format(path: Path, format_name: str) -> bool:
+    return path.suffix.lower() in FORMAT_EXTENSIONS[format_name]
+
+
+def recommended_extension(path: Path, format_name: str) -> str:
+    suffix = path.suffix.lower()
+    return suffix if suffix in FORMAT_EXTENSIONS[format_name] else CANONICAL_EXTENSIONS[format_name]
+
+
+def format_for_extension(path: Path) -> str:
+    suffix = path.suffix.lower()
+    for format_name, extensions in FORMAT_EXTENSIONS.items():
+        if suffix in extensions:
+            return format_name
+    raise ValueError("Only JPEG and PNG are supported by this skill.")
+
+
 def srgb_to_linear(rgb: np.ndarray) -> np.ndarray:
     return np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
 
@@ -790,9 +822,15 @@ def load_image(
     require_supported(path)
     with Image.open(path) as source:
         source.load()
-        source_bit_depth = image_source_bit_depth(path, source.format)
+        detected_format = require_detected_format(source.format)
+        source_extension = path.suffix.lower()
+        extension_matches = extension_matches_format(path, detected_format)
+        source_bit_depth = image_source_bit_depth(path, detected_format)
         metadata: dict[str, Any] = {
-            "format": source.format,
+            "format": detected_format,
+            "source_extension": source_extension,
+            "extension_matches_format": extension_matches,
+            "recommended_extension": recommended_extension(path, detected_format),
             "source_mode": source.mode,
             "source_bit_depth": source_bit_depth,
             "exif": source.info.get("exif"),
@@ -802,6 +840,12 @@ def load_image(
             "icc_status": "absent_assumed_srgb" if not source.info.get("icc_profile") else "present",
             "warnings": [],
         }
+        if not extension_matches:
+            metadata["warnings"].append(
+                f"Source extension {source_extension} does not match detected {detected_format} payload; "
+                f"preserve {detected_format} with a {metadata['recommended_extension']} output unless "
+                "format conversion is explicitly requested."
+            )
         has_alpha = source.mode in {"RGBA", "LA"} or (
             source.mode == "P" and "transparency" in source.info
         )
@@ -983,6 +1027,10 @@ def analyze(path: Path) -> dict[str, Any]:
     result = {
         "file": str(path),
         "format": meta["format"],
+        "source_extension": meta["source_extension"],
+        "detected_format": meta["format"],
+        "extension_matches_format": meta["extension_matches_format"],
+        "recommended_extension": meta["recommended_extension"],
         "width": meta["size"][0],
         "height": meta["size"][1],
         "has_alpha": meta["has_alpha"],
@@ -1849,6 +1897,7 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
     output = Path(args.output).resolve()
     require_supported(source)
     require_supported(output)
+    requested_output_format = format_for_extension(output)
     if source == output:
         raise ValueError("Refusing to overwrite the original image.")
     output_is_png = output.suffix.lower() == ".png"
@@ -1885,6 +1934,13 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
         output,
         preserve_png16=output_is_png and settings.png_bit_depth == 16,
     )
+    output_extension_matches = extension_matches_format(output, check_meta["format"])
+    if not output_extension_matches:
+        output.unlink(missing_ok=True)
+        raise RuntimeError("Output extension does not match its encoded format; output was removed.")
+    if requested_output_format != check_meta["format"]:
+        output.unlink(missing_ok=True)
+        raise RuntimeError("Output encoder did not produce the requested format; output was removed.")
     if meta["size"] != check_meta["size"]:
         output.unlink(missing_ok=True)
         raise RuntimeError("Output dimensions changed; output was removed.")
@@ -1899,9 +1955,19 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
     ):
         output.unlink(missing_ok=True)
         raise RuntimeError("Output alpha values changed; output was removed.")
+    output_format_conversion = (
+        None
+        if meta["format"] == check_meta["format"]
+        else {"from": meta["format"], "to": check_meta["format"]}
+    )
     result = {
         "input": str(source),
         "output": str(output),
+        "source_extension": meta["source_extension"],
+        "detected_format": meta["format"],
+        "extension_matches_format": meta["extension_matches_format"],
+        "recommended_extension": meta["recommended_extension"],
+        "output_format_conversion": output_format_conversion,
         "width": meta["size"][0],
         "height": meta["size"][1],
         "style": recipe["style"],
@@ -1920,6 +1986,8 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
         },
         "output_encoding": {
             "format": check_meta["format"],
+            "extension": output.suffix.lower(),
+            "extension_matches_format": output_extension_matches,
             "source_bit_depth": meta["source_bit_depth"],
             "output_bit_depth": check_meta["source_bit_depth"],
             "png_dither": settings.png_dither if output_is_png else "not_applicable",
@@ -1943,8 +2011,14 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
                 stages[-1]["out_of_gamut_ratio_after"] if stages else 0.0
             ),
         }
-    if meta["warnings"]:
-        result["warnings"] = list(meta["warnings"])
+    warnings = list(meta["warnings"])
+    if output_format_conversion is not None:
+        warnings.append(
+            f"Output extension {output.suffix.lower()} explicitly converts detected "
+            f"{meta['format']} input to {check_meta['format']}."
+        )
+    if warnings:
+        result["warnings"] = warnings
     active_global_presence = [
         name
         for name in ("dehaze", "clarity", "texture")

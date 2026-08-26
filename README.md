@@ -59,11 +59,13 @@ D3 大片冲击
 
 ## 本地脚本
 
-依赖 Python 3、NumPy、Pillow 与 PyPNG：
+普通 JPEG 与 8 位 PNG 流程依赖 Python 3、NumPy 和 Pillow；16 位 PNG 读写另外需要 PyPNG。安装完整的固定版本依赖：
 
 ```bash
 python3 -m pip install -r requirements.txt
 ```
+
+如果 PyPNG 未安装，普通分析、比较和 8 位调色仍可运行；只有实际请求 16 位 PNG 时会以退出码 `2` 返回安装指引，且不会留下输出文件。
 
 分析照片：
 

@@ -10,10 +10,25 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
-import png
+
+try:
+    import png
+except ModuleNotFoundError as exc:
+    if exc.name != "png":
+        raise
+    png = None
 
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def require_pypng() -> Any:
+    if png is None:
+        raise ValueError(
+            "16-bit PNG processing requires pypng; install it with "
+            "`python -m pip install -r requirements.txt` from the skill directory."
+        )
+    return png
 
 
 def _chunk(chunk_type: bytes, payload: bytes) -> bytes:
@@ -78,7 +93,8 @@ def read_png16(path: Path) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any
     header = inspect_ihdr(path)
     if header["bit_depth"] != 16:
         raise ValueError("Expected a 16-bit PNG input.")
-    width, height, rows, info = png.Reader(filename=str(path)).asDirect()
+    pypng = require_pypng()
+    width, height, rows, info = pypng.Reader(filename=str(path)).asDirect()
     bit_depth = int(info["bitdepth"])
     if bit_depth != 16:
         raise ValueError("PyPNG did not return 16-bit source samples.")
@@ -152,6 +168,7 @@ def write_png16(
         or alpha16.shape != (*rgb16.shape[:2], 1)
     ):
         raise ValueError("alpha16 must match rgb16 geometry and contain one uint16 channel.")
+    pypng = require_pypng()
     height, width = rgb16.shape[:2]
     samples = rgb16 if alpha16 is None else np.concatenate((rgb16, alpha16), axis=2)
     dpi = metadata.get("dpi")
@@ -165,7 +182,7 @@ def write_png16(
                 "y_pixels_per_unit": y_ppm,
                 "unit_is_meter": True,
             }
-    writer = png.Writer(
+    writer = pypng.Writer(
         width=width,
         height=height,
         greyscale=False,
