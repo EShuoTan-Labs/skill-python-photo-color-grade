@@ -8,6 +8,7 @@
 - [Basic and tone controls](#basic-and-tone-controls)
 - [Point curve](#point-curve)
 - [RGB channel curves](#rgb-channel-curves)
+- [Presence](#presence)
 - [HSL](#hsl)
 - [Color grading](#color-grading)
 - [Local masks](#local-masks)
@@ -49,6 +50,10 @@ Include every top-level key shown below. Within `parameters`, include only activ
     "channel_curves": {
       "red": [[0.0, 0.0], [0.5, 0.52], [1.0, 1.0]]
     },
+    "presence": {
+      "clarity": 0.12,
+      "texture": 0.08
+    },
     "hsl": {
       "blue": {"saturation": 0.08, "luminance": -0.03}
     },
@@ -59,11 +64,12 @@ Include every top-level key shown below. Within `parameters`, include only activ
 }
 ```
 
-The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
+The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `presence`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
 
 Omitted defaults are:
 
 - `0` for basic, HSL, and color-grading controls, except `color_grading.blending: 0.5`;
+- `0` for `presence.dehaze`, `presence.clarity`, and `presence.texture`;
 - `[]` for the point curve, each RGB channel curve, and both local-mask arrays;
 - `detail.denoise: 0`, `detail.sharpen: 0`, and `detail.sharpen_radius: 1`;
 - `output.jpeg_quality: 95` and `output.png_compress: 6`.
@@ -162,6 +168,30 @@ Processing is deterministic and fixed:
 
 This order also applies inside each local adjustment: local main curve first, then local channel curves. A lifted channel endpoint introduces a channel-specific black tint; a lowered white endpoint reduces that channel in highlights. Prefer coordinated, restrained endpoint moves when neutral blacks or whites must remain neutral.
 
+## Presence
+
+`presence` is an optional object with only `dehaze`, `clarity`, and `texture`. Every included value must be a finite JSON number from `-1` to `+1`; booleans, non-finite values, unknown keys, and values outside the range are validation errors. Omitted controls expand to `0`, and an omitted or all-zero section is an exact processing skip.
+
+```json
+"presence": {
+  "dehaze": 0.18,
+  "clarity": 0.22,
+  "texture": 0.12
+}
+```
+
+| Control | Scale and effect | Guidance |
+|---|---|---|
+| `dehaze` | Low-frequency luminance-range recovery with black/highlight protection and restrained chroma recovery | Use positive values for genuine atmospheric veiling or compressed low-frequency separation; ordinary range `0.05–0.25`. Negative values gently flatten low-frequency separation. |
+| `clarity` | Mid-frequency, midtone-weighted local contrast | Use for architecture, landscape structure, or dimensional separation; ordinary range `0.05–0.30`. Negative values soften mid-scale structure. |
+| `texture` | Small-scale detail gain with a spatial-coherence noise gate | Use for foliage, fabric, stone, or fine reflective detail; ordinary range `0.04–0.25`. Negative values soften fine texture without replacing denoise. |
+
+The fixed global order is `dehaze` → `clarity` → `texture`, after `local_corrections` and before vibrance, saturation, HSL, and color grading. The implementation performs deterministic NumPy `float32` luminance decomposition with edge-extended floating-point box filters; it does not round-trip through an 8-bit Pillow filter image. Filter scale is derived only from image dimensions and is capped, so repeated runs with the same inputs and dependency versions are deterministic.
+
+All three controls reconstruct RGB from adjusted encoded-sRGB luminance instead of independently sharpening R, G, and B. A highlight/shadow envelope, strong-gradient guard, and local 3×3 luminance envelope limit halos and full-strength step-edge overshoot/undershoot to at most `0.02`. Clarity and texture additionally use signed-gradient coherence to reduce amplification of random residuals in flat regions. Dehaze applies a small, gamut-constrained chroma factor while preserving the source hue vector; constant images remain unchanged.
+
+Use the three controls for distinct scales rather than stacking them by default. Dehaze is not a substitute for exposure or black-point work, clarity is not output sharpening, and texture is not denoise. Strong positive values may reveal existing noise or compression artifacts even with the guards, so inspect smooth skies, skin, foliage, building edges, and backlit haze at full resolution.
+
 ## HSL
 
 Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral.
@@ -246,7 +276,9 @@ For example, this mask selects bright pixels only where they also lie inside a f
 
 To select a color range while excluding highlights, use `subtract` with the color mask as input `A` and the luminance mask as input `B`. Reversing the inputs produces a different mask.
 
-`adjustments` contains one or more basic-control names from above, `curve`, or `channel_curves`. Local `exposure` accepts `-4` to `+4`; other numeric adjustments accept `-1` to `+1`; local main and channel curves follow the curve rules above.
+`adjustments` contains one or more basic-control names from above, `curve`, `channel_curves`, `clarity`, or `texture`. Local `exposure` accepts `-4` to `+4`; other numeric adjustments accept `-1` to `+1`; local main and channel curves follow the curve rules above. Local `dehaze` is intentionally unsupported and is rejected as an unknown adjustment because its low-frequency estimate cannot be made mask-local without boundary mismatch.
+
+Inside one local item, processing is fixed as local tone/curves → local clarity → local texture → local vibrance/saturation. The full-frame floating-point variant is calculated first and then blended with the completed mask. This keeps feathered coverage continuous and means mask coverage `0` returns the stage input exactly while coverage `1` returns the complete local variant.
 
 ```json
 "local_adjustments": [
@@ -261,7 +293,8 @@ To select a color range while excluding highlights, use `subtract` with the colo
     },
     "adjustments": {
       "exposure": 0.2,
-      "shadows": 0.1
+      "shadows": 0.1,
+      "clarity": 0.12
     }
   }
 ]
@@ -300,3 +333,5 @@ The script applies denoise before tonal amplification and sharpening after all g
 As with legacy metrics, a pixel is visible only when alpha is absent or alpha is greater than `0.01`. These arrays are intended for machine-readable cast, channel clipping, tonal separation, and spatial color-balance decisions; `analyze` does not create parade images.
 
 `grade.processing` reports the fixed curve working space, interpolation, order, and active channel names without exposing curve points unless `--show-parameters` is explicitly set. `compare.rgb_channel_difference` provides signed mean, mean absolute, p95 absolute, and maximum absolute encoded-sRGB differences for each channel when geometry matches.
+
+When any global or local presence control is nonzero, `grade.processing.presence` is added with the fixed working signal, method and global order, the names of active global controls, and each local stage/index with active local control names. It does not expose numeric settings; use `--show-parameters` only when the expanded recipe is explicitly required. For recipes with no active presence control, this optional technical block is omitted so legacy reports retain their prior `processing` structure.

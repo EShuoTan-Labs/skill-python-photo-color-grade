@@ -1,6 +1,6 @@
 ---
 name: python-photo-color-grade
-description: Analyze and color-grade uploaded JPEG or PNG photographs with a deterministic Lightroom-style Python pipeline. Use for 调色, exposure and white-balance correction, tone curves, HSL, three-way color grading, deterministic local masks, denoise, sharpening, and natural through bold cinematic looks. Apply non-generative tonal, color, and detail adjustments only. Do not use for retouching, object removal, inpainting, semantic editing, HEIC, or RAW.
+description: Analyze and color-grade uploaded JPEG or PNG photographs with a deterministic Lightroom-style Python pipeline. Use for 调色, exposure and white-balance correction, tone curves, HSL, three-way color grading, dehaze, clarity, texture, deterministic local masks, denoise, sharpening, and natural through bold cinematic looks. Apply non-generative tonal, color, and detail adjustments only. Do not use for retouching, object removal, inpainting, semantic editing, HEIC, or RAW.
 ---
 
 # Python Photo Color Grade
@@ -24,6 +24,8 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 - Do not use or claim semantic subject/sky masks. Describe every mask by its actual geometric, luminance, or color basis.
 - Do not perform spatial transforms, retouching, synthetic detail, grain, or depth-of-field simulation.
 - Enable denoise or sharpening only when technically justified or requested; keep both conservative.
+- Use dehaze only for visible atmospheric veiling or compressed low-frequency separation. Use clarity for mid-scale structure and texture for fine coherent detail; do not treat the three controls as interchangeable strength layers.
+- Localize clarity or texture when the scene benefits from selective structure. Keep dehaze global because local low-frequency estimation can create boundary mismatch.
 
 ## Workflow
 
@@ -83,7 +85,7 @@ Name each file `<original-stem>_<style-id><intensity>_<direction-description><ex
 
 Each successful `grade` call has already reopened the encoded output, rejected any dimension or alpha change, and returned source/output metrics as `before` and `after`. Use that report for the routine metric comparison; do not rerun `compare` for an output created by the same call. Only when auditing an existing output whose original report is unavailable, run `python3 <skill-dir>/scripts/photo_grade.py compare <input> <output> --pretty`.
 
-Reopen and visually inspect every rendered image. Use `before` and `after` to detect unexpected clipping or tonal damage, then judge its visual extent and purpose. Check color integrity, skin and neutral colors when present, banding, halos, noise smearing, oversharpening, and broad crushed regions. Do not spend visual review on dimensions, alpha, or geometry: the pipeline exposes no geometric transforms and `grade` enforces those invariants.
+Reopen and visually inspect every rendered image. Use `before` and `after` to detect unexpected clipping or tonal damage, then judge its visual extent and purpose. Check color integrity, skin and neutral colors when present, banding, halos, noise smearing, oversharpening, and broad crushed regions. When presence controls are active, inspect skies and skin for noise amplification, foliage and fine texture for brittle detail, building and horizon edges for bright/dark halos, and backlit haze for unnatural black or color recovery. Do not spend visual review on dimensions, alpha, or geometry: the pipeline exposes no geometric transforms and `grade` enforces those invariants.
 
 Check every predeclared success criterion. For creative and bold results, confirm the tonal hierarchy remains purposeful in grayscale and level `3` reads as authored without a side-by-side comparison. Reject a bold result if it remains uniformly safe, differs mainly by palette, or reads as a generic vignette. Inspect all delivered variants together and redesign any pair separated only by cosmetic differences.
 

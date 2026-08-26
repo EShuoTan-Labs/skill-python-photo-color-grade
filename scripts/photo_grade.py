@@ -52,7 +52,9 @@ BASIC_FIELD_ORDER = (
 )
 BASIC_FIELDS = set(BASIC_FIELD_ORDER)
 CHANNEL_NAMES = ("red", "green", "blue")
-LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve", "channel_curves"}
+PRESENCE_FIELDS = {"dehaze", "clarity", "texture"}
+LOCAL_PRESENCE_FIELDS = {"clarity", "texture"}
+LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve", "channel_curves"} | LOCAL_PRESENCE_FIELDS
 COMPOSITE_MASK_OPERATIONS = {"and", "or", "subtract"}
 MAX_MASK_DEPTH = 6
 MAX_MASK_LEAVES = 32
@@ -287,6 +289,7 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         "basic",
         "curve",
         "channel_curves",
+        "presence",
         "hsl",
         "color_grading",
         "local_corrections",
@@ -313,6 +316,19 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         "recipe.parameters.channel_curves",
     )
     normalized["channel_curves"] = channel_curves
+
+    presence = require_object(parameters.get("presence", {}), "recipe.parameters.presence")
+    reject_unknown_keys(presence, PRESENCE_FIELDS, "recipe.parameters.presence")
+    expanded_presence: dict[str, float] = {}
+    for name in ("dehaze", "clarity", "texture"):
+        value = require_number(
+            presence.get(name, 0.0),
+            f"recipe.parameters.presence.{name}",
+            -1.0,
+            1.0,
+        )
+        normalized[name] = value
+        expanded_presence[name] = value
 
     hsl = require_object(parameters.get("hsl", {}), "recipe.parameters.hsl")
     reject_unknown_keys(hsl, set(HUE_CENTERS), "recipe.parameters.hsl")
@@ -394,6 +410,7 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         "basic": expanded_basic,
         "curve": curve,
         "channel_curves": expanded_channel_curves,
+        "presence": expanded_presence,
         "hsl": expanded_hsl,
         "color_grading": expanded_grading,
         "local_corrections": local_corrections,
@@ -731,6 +748,184 @@ def apply_channel_curves(
     return result
 
 
+def box_blur_float(values: np.ndarray, radius: int) -> np.ndarray:
+    """Return an edge-extended separable box blur without integer quantization."""
+    if radius <= 0:
+        return values
+    if values.ndim != 2:
+        raise ValueError("Float box blur expects a two-dimensional luminance array.")
+    window = radius * 2 + 1
+    result = values.astype(np.float32, copy=False)
+    for axis in (0, 1):
+        padding = [(0, 0), (0, 0)]
+        padding[axis] = (radius, radius)
+        extended = np.pad(result, padding, mode="edge")
+        cumulative = np.cumsum(extended, axis=axis, dtype=np.float64)
+        zero_shape = list(cumulative.shape)
+        zero_shape[axis] = 1
+        cumulative = np.concatenate(
+            (np.zeros(zero_shape, dtype=np.float64), cumulative),
+            axis=axis,
+        )
+        leading = [slice(None), slice(None)]
+        trailing = [slice(None), slice(None)]
+        leading[axis] = slice(window, None)
+        trailing[axis] = slice(None, -window)
+        result = ((cumulative[tuple(leading)] - cumulative[tuple(trailing)]) / window).astype(
+            np.float32
+        )
+    return result
+
+
+def local_luma_envelope(luma: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    padded = np.pad(luma, 1, mode="edge")
+    neighborhoods = [
+        padded[y : y + luma.shape[0], x : x + luma.shape[1]]
+        for y in range(3)
+        for x in range(3)
+    ]
+    return np.minimum.reduce(neighborhoods), np.maximum.reduce(neighborhoods)
+
+
+def luma_gradient(luma: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    padded = np.pad(luma, 1, mode="edge")
+    dx = 0.5 * (padded[1:-1, 2:] - padded[1:-1, :-2])
+    dy = 0.5 * (padded[2:, 1:-1] - padded[:-2, 1:-1])
+    magnitude = np.sqrt(dx * dx + dy * dy).astype(np.float32)
+    return dx.astype(np.float32), dy.astype(np.float32), magnitude
+
+
+def coherent_detail_gate(detail: np.ndarray, scale: int) -> np.ndarray:
+    """Prefer spatially coherent detail over random residuals in nominally flat areas."""
+    dx, dy, magnitude = luma_gradient(detail)
+    radius = max(1, 2 * scale)
+    mean_dx = box_blur_float(dx, radius)
+    mean_dy = box_blur_float(dy, radius)
+    mean_magnitude = box_blur_float(magnitude, radius)
+    coherence = np.sqrt(mean_dx * mean_dx + mean_dy * mean_dy) / np.maximum(
+        mean_magnitude,
+        1e-6,
+    )
+    return (0.12 + 0.88 * smoothstep(0.08, 0.72, coherence)).astype(np.float32)
+
+
+def reconstruct_from_luma(
+    rgb: np.ndarray,
+    target_luma: np.ndarray,
+    chroma_factor: np.ndarray | float = 1.0,
+) -> np.ndarray:
+    """Set encoded-sRGB luminance while preserving hue and constraining gamut."""
+    source = np.clip(rgb, 0.0, 1.0).astype(np.float32, copy=False)
+    current = source @ LUMA
+    ratio = np.divide(
+        target_luma,
+        np.maximum(current, 1e-6),
+        out=np.ones_like(target_luma, dtype=np.float32),
+        where=current > 1e-6,
+    )
+    ratio = np.maximum(ratio, 0.0)
+    scaled = source * ratio[..., None]
+    black = current <= 1e-6
+    if np.any(black):
+        scaled[black] = target_luma[black, None]
+
+    factor = np.broadcast_to(np.asarray(chroma_factor, dtype=np.float32), target_luma.shape)
+    factor = np.maximum(factor, 0.0)
+    chroma = scaled - target_luma[..., None]
+    positive_chroma = chroma > 1e-7
+    negative_chroma = chroma < -1e-7
+    allowed = np.full_like(chroma, np.inf, dtype=np.float32)
+    np.divide(
+        1.0 - target_luma[..., None],
+        chroma,
+        out=allowed,
+        where=positive_chroma,
+    )
+    negative_allowed = np.full_like(chroma, np.inf, dtype=np.float32)
+    np.divide(
+        -target_luma[..., None],
+        chroma,
+        out=negative_allowed,
+        where=negative_chroma,
+    )
+    allowed[negative_chroma] = negative_allowed[negative_chroma]
+    factor = np.minimum(factor, np.min(allowed, axis=2))
+    result = target_luma[..., None] + chroma * factor[..., None]
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Presence processing produced non-finite RGB values.")
+    return np.clip(result, 0.0, 1.0).astype(np.float32)
+
+
+def apply_presence(
+    rgb: np.ndarray,
+    dehaze: float = 0.0,
+    clarity: float = 0.0,
+    texture: float = 0.0,
+) -> np.ndarray:
+    """Apply deterministic low-, mid-, and high-frequency luminance shaping."""
+    dehaze = float(np.clip(dehaze, -1.0, 1.0))
+    clarity = float(np.clip(clarity, -1.0, 1.0))
+    texture = float(np.clip(texture, -1.0, 1.0))
+    if max(abs(dehaze), abs(clarity), abs(texture)) < 1e-12:
+        return rgb
+    if not np.all(np.isfinite(rgb)):
+        raise ValueError("Presence processing requires finite RGB values.")
+
+    source = np.clip(rgb, 0.0, 1.0).astype(np.float32, copy=False)
+    original_luma = (source @ LUMA).astype(np.float32)
+    height, width = original_luma.shape
+    scale = max(1, min(8, int(round(min(height, width) / 512.0))))
+    low, high = local_luma_envelope(original_luma)
+    allowance = 0.02 * max(abs(dehaze), abs(clarity), abs(texture))
+    lower_bound = np.maximum(0.0, low - allowance)
+    upper_bound = np.minimum(1.0, high + allowance)
+    result = source
+
+    if abs(dehaze) >= 1e-12:
+        luma = (result @ LUMA).astype(np.float32)
+        medium = box_blur_float(luma, 4 * scale)
+        broad = box_blur_float(luma, 16 * scale)
+        dehaze_band = medium - broad
+        _, _, gradient = luma_gradient(luma)
+        edge_guard = 1.0 - smoothstep(0.055, 0.28, gradient)
+        tone_guard = smoothstep(0.015, 0.14, luma) * (1.0 - smoothstep(0.88, 0.995, luma))
+        p05, p95 = np.percentile(luma, [5, 95])
+        scene_range = float(p95 - p05)
+        haze_weight = float(np.clip((0.62 - scene_range) / 0.62, 0.0, 1.0))
+        midpoint = float((p05 + p95) * 0.5)
+        low_range = dehaze_band + 0.32 * haze_weight * (broad - midpoint)
+        target = luma + dehaze * 0.62 * low_range * tone_guard * edge_guard
+        target = np.clip(target, lower_bound, upper_bound)
+        chroma_factor = 1.0 + 0.08 * dehaze * tone_guard
+        result = reconstruct_from_luma(result, target.astype(np.float32), chroma_factor)
+
+    if abs(clarity) >= 1e-12:
+        luma = (result @ LUMA).astype(np.float32)
+        small = box_blur_float(luma, scale)
+        medium = box_blur_float(luma, 4 * scale)
+        clarity_band = small - medium
+        _, _, gradient = luma_gradient(luma)
+        edge_guard = 1.0 - smoothstep(0.055, 0.28, gradient)
+        clarity_gate = coherent_detail_gate(clarity_band, 2 * scale)
+        midtone_guard = smoothstep(0.08, 0.32, luma) * (1.0 - smoothstep(0.68, 0.94, luma))
+        target = luma + clarity * 0.92 * clarity_band * clarity_gate * midtone_guard * edge_guard
+        target = np.clip(target, lower_bound, upper_bound)
+        result = reconstruct_from_luma(result, target.astype(np.float32))
+
+    if abs(texture) >= 1e-12:
+        luma = (result @ LUMA).astype(np.float32)
+        small = box_blur_float(luma, scale)
+        texture_band = luma - small
+        _, _, gradient = luma_gradient(luma)
+        edge_guard = 1.0 - smoothstep(0.055, 0.28, gradient)
+        tone_guard = smoothstep(0.015, 0.14, luma) * (1.0 - smoothstep(0.88, 0.995, luma))
+        texture_gate = coherent_detail_gate(texture_band, scale)
+        target = luma + texture * 0.72 * texture_band * texture_gate * tone_guard * edge_guard
+        target = np.clip(target, lower_bound, upper_bound)
+        result = reconstruct_from_luma(result, target.astype(np.float32))
+    return result
+
+
 def apply_selective_color(
     rgb: np.ndarray,
     adjustments: dict[str, tuple[float, float, float]],
@@ -817,6 +1012,11 @@ def apply_tonal_adjustments(rgb: np.ndarray, parameters: Any) -> np.ndarray:
 
 def apply_adjustment_bundle(rgb: np.ndarray, parameters: Any) -> np.ndarray:
     result = apply_tonal_adjustments(rgb, parameters)
+    result = apply_presence(
+        result,
+        clarity=getattr(parameters, "clarity", 0.0),
+        texture=getattr(parameters, "texture", 0.0),
+    )
     return apply_color(result, parameters.vibrance, parameters.saturation)
 
 
@@ -834,6 +1034,8 @@ def local_parameters(adjustments: dict[str, Any]) -> SimpleNamespace:
         "vibrance",
         "curve",
         "channel_curves",
+        "clarity",
+        "texture",
     }
     unknown = set(adjustments) - allowed
     if unknown:
@@ -997,6 +1199,12 @@ def grade_pixels(rgb: np.ndarray, args: argparse.Namespace) -> np.ndarray:
     result = apply_denoise(rgb, args.denoise)
     result = apply_tonal_adjustments(result, args)
     result = apply_local_adjustments(result, args.local_corrections)
+    result = apply_presence(
+        result,
+        getattr(args, "dehaze", 0.0),
+        getattr(args, "clarity", 0.0),
+        getattr(args, "texture", 0.0),
+    )
     result = apply_color(result, args.vibrance, args.saturation)
     adjustments = {
         name: (
@@ -1116,6 +1324,31 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
             ],
         },
     }
+    active_global_presence = [
+        name
+        for name in ("dehaze", "clarity", "texture")
+        if abs(float(getattr(settings, name, 0.0))) >= 1e-12
+    ]
+    active_local_presence: list[dict[str, Any]] = []
+    for stage_name in ("local_corrections", "local_adjustments"):
+        for index, item in enumerate(getattr(settings, stage_name, [])):
+            controls = [
+                name
+                for name in ("clarity", "texture")
+                if abs(float(item["adjustments"].get(name, 0.0))) >= 1e-12
+            ]
+            if controls:
+                active_local_presence.append(
+                    {"stage": stage_name, "index": index, "controls": controls}
+                )
+    if active_global_presence or active_local_presence:
+        result["processing"]["presence"] = {
+            "working_signal": "encoded_srgb_luminance_float32",
+            "method": "deterministic_multiscale_luminance_reconstruction",
+            "global_order": ["dehaze", "clarity", "texture"],
+            "active_global": active_global_presence,
+            "active_local": active_local_presence,
+        }
     if args.show_parameters:
         result["parameters"] = recipe["parameters"]
     return result
