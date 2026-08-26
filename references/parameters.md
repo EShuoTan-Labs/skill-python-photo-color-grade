@@ -277,6 +277,8 @@ Place each mask in one stage according to its purpose. Every mask node requires 
 | `radial` | `center: [x,y]` from `0` to `1`; `radius: [rx,ry]` from `0.0001` to `1`; `feather` from `0` to `0.99` |
 | `composite` | `operation`: `"and"`, `"or"`, or `"subtract"`; `inputs`: an array of child mask nodes |
 
+For `linear`, let `t = dot(p - start, end - start) / ||end - start||²` for normalized pixel position `p`. Base coverage is `0` when `t <= 0`, `t²(3 - 2t)` when `0 < t < 1`, and `1` when `t >= 1`. Thus `start` is the zero-coverage end, `end` is the full-coverage end, values are clipped beyond both ends, and reversing the endpoints reverses the gradient. The node's `invert` and `opacity` apply afterward.
+
 A composite mask combines already feathered mask coverage without semantic segmentation or a second feathering pass. Its deterministic operations are:
 
 - `and`: pixel-wise `min` over `2–8` child masks.
