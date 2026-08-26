@@ -7,10 +7,12 @@
 - [Creative structure and controlled extremes](#creative-structure-and-controlled-extremes)
 - [Basic and tone controls](#basic-and-tone-controls)
 - [Point curve](#point-curve)
+- [RGB channel curves](#rgb-channel-curves)
 - [HSL](#hsl)
 - [Color grading](#color-grading)
 - [Local masks](#local-masks)
 - [Detail and output](#detail-and-output)
+- [Analysis and reports](#analysis-and-reports)
 
 ## Required internal recipe
 
@@ -44,6 +46,9 @@ Include every top-level key shown below. Within `parameters`, include only activ
       "vibrance": 0.06
     },
     "curve": [[0.0, 0.0], [0.5, 0.52], [1.0, 1.0]],
+    "channel_curves": {
+      "red": [[0.0, 0.0], [0.5, 0.52], [1.0, 1.0]]
+    },
     "hsl": {
       "blue": {"saturation": 0.08, "luminance": -0.03}
     },
@@ -54,12 +59,12 @@ Include every top-level key shown below. Within `parameters`, include only activ
 }
 ```
 
-The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
+The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
 
 Omitted defaults are:
 
 - `0` for basic, HSL, and color-grading controls, except `color_grading.blending: 0.5`;
-- `[]` for the point curve and both local-mask arrays;
+- `[]` for the point curve, each RGB channel curve, and both local-mask arrays;
 - `detail.denoise: 0`, `detail.sharpen: 0`, and `detail.sharpen_radius: 1`;
 - `output.jpeg_quality: 95` and `output.png_compress: 6`.
 
@@ -134,6 +139,29 @@ Use an empty array or at least two increasing `[x, y]` points from `x=0` to `x=1
 
 Keep x coordinates strictly increasing and all coordinates within `[0,1]`. Use a gentle S-curve or lifted/faded endpoints only when the selected look calls for it.
 
+The main `curve` operates on encoded-sRGB luminance. The pipeline maps luminance through the piecewise-linear curve and scales RGB to the mapped luminance. It runs before any RGB channel curve.
+
+## RGB channel curves
+
+`channel_curves` is an optional object with only `red`, `green`, and `blue` keys. Each value uses the same empty-or-two-plus-point validation as the main curve. Omitted channels and empty arrays are fully neutral and are skipped without clipping their input:
+
+```json
+"channel_curves": {
+  "red": [[0.0, 0.04], [0.5, 0.55], [1.0, 1.0]],
+  "green": [],
+  "blue": [[0.0, 0.08], [0.5, 0.5], [1.0, 0.94]]
+}
+```
+
+Processing is deterministic and fixed:
+
+1. Apply the main luminance `curve` first.
+2. In encoded sRGB, independently map R, G, then B over the `[0,1]` domain.
+3. Use piecewise-linear interpolation between control points.
+4. For an active channel only, clip its input to `[0,1]` before interpolation. Endpoints at `x=0` and `x=1`, plus validated `y` coordinates in `[0,1]`, define the boundary output.
+
+This order also applies inside each local adjustment: local main curve first, then local channel curves. A lifted channel endpoint introduces a channel-specific black tint; a lowered white endpoint reduces that channel in highlights. Prefer coordinated, restrained endpoint moves when neutral blacks or whites must remain neutral.
+
 ## HSL
 
 Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral.
@@ -142,7 +170,7 @@ Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, 
 "blue": {"hue": -8.0, "saturation": 0.12, "luminance": -0.05}
 ```
 
-The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. Keep ordinary hue corrections around `-20` to `+20` and saturation/luminance around `-0.25` to `+0.25`. Change only visibly relevant ranges.
+The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. For backward compatibility, the legacy HSL execution path clips the effective per-range saturation adjustment to `+1.0`; values from `+1.0` through `+1.5` remain accepted but produce the legacy `+1.0` effect. Keep ordinary hue corrections around `-20` to `+20` and saturation/luminance around `-0.25` to `+0.25`. Change only visibly relevant ranges.
 
 ## Color grading
 
@@ -176,7 +204,7 @@ Place each mask in one stage according to its purpose. Every mask requires `type
 | `linear` | distinct `start: [x,y]` and `end: [x,y]`, with every coordinate from `0` to `1` |
 | `radial` | `center: [x,y]` from `0` to `1`; `radius: [rx,ry]` from `0.0001` to `1`; `feather` from `0` to `0.99` |
 
-`adjustments` contains one or more basic-control names from above or `curve`. Local `exposure` accepts `-4` to `+4`; other numeric adjustments accept `-1` to `+1`; local `curve` follows the point-curve rules above.
+`adjustments` contains one or more basic-control names from above, `curve`, or `channel_curves`. Local `exposure` accepts `-4` to `+4`; other numeric adjustments accept `-1` to `+1`; local main and channel curves follow the curve rules above.
 
 ```json
 "local_adjustments": [
@@ -214,3 +242,17 @@ Accepted `detail` and `output` controls and ranges:
 | `output.png_compress` | PNG compression level | integer `0` to `9` | Use `6` by default; lossless |
 
 The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested.
+
+## Analysis and reports
+
+`analyze.metrics`, plus the `before` and `after` metric objects returned by `grade`, retain all legacy fields and add:
+
+- `rgb_channels.red|green|blue.mean`: visible-pixel channel mean.
+- `rgb_channels.*.percentiles`: visible-pixel `1`, `5`, `25`, `50`, `75`, `95`, and `99` percentiles.
+- `rgb_channels.*.low_clip_ratio` and `high_clip_ratio`: independent channel clipping ratios using the legacy thresholds `<= 0.002` and `>= 0.998`.
+- `rgb_channels.*.histogram_64`: 64 normalized bins spanning encoded sRGB `[0,1]`; each channel sums to `1` within floating-point representation.
+- `spatial_rgb_mean_grid_3x3`: row-major 3×3 cells, each containing `[red, green, blue]` means or `null` when the cell has no visible pixels.
+
+As with legacy metrics, a pixel is visible only when alpha is absent or alpha is greater than `0.01`. These arrays are intended for machine-readable cast, channel clipping, tonal separation, and spatial color-balance decisions; `analyze` does not create parade images.
+
+`grade.processing` reports the fixed curve working space, interpolation, order, and active channel names without exposing curve points unless `--show-parameters` is explicitly set. `compare.rgb_channel_difference` provides signed mean, mean absolute, p95 absolute, and maximum absolute encoded-sRGB differences for each channel when geometry matches.

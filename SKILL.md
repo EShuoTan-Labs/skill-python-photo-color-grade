@@ -35,7 +35,7 @@ Inspect the photograph visually, then run:
 python3 <skill-dir>/scripts/photo_grade.py analyze <input> --pretty
 ```
 
-Assess exposure, clipping, dynamic range, measurable cast, saturation, noise, softness, and the `spatial_luma_grid_3x3`. Use metrics as evidence, then confirm every interpretation visually. Identify:
+Assess exposure, clipping, dynamic range, measurable cast, saturation, noise, softness, and the `spatial_luma_grid_3x3`. Use `rgb_channels` to identify channel-specific clipping, endpoint latitude, and percentile separation, and use `spatial_rgb_mean_grid_3x3` to distinguish a global cast from spatially localized color. Treat the normalized histograms as machine-readable evidence for curve decisions, not as a replacement for visual inspection. Confirm every interpretation visually. Identify:
 
 - the existing or implied light direction and falloff;
 - highlight latitude and useful reflective surfaces;

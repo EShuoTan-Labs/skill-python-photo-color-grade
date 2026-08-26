@@ -51,7 +51,8 @@ BASIC_FIELD_ORDER = (
     "saturation",
 )
 BASIC_FIELDS = set(BASIC_FIELD_ORDER)
-LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve"}
+CHANNEL_NAMES = ("red", "green", "blue")
+LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve", "channel_curves"}
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -127,6 +128,21 @@ def validate_curve_value(value: Any, label: str) -> str | None:
     return ",".join(f"{x:g}:{y:g}" for x, y in points)
 
 
+def validate_channel_curves(
+    value: Any,
+    label: str,
+) -> tuple[dict[str, str | None], dict[str, list[Any]]]:
+    curves = require_object(value, label)
+    reject_unknown_keys(curves, set(CHANNEL_NAMES), label)
+    normalized: dict[str, str | None] = {}
+    expanded: dict[str, list[Any]] = {}
+    for channel in CHANNEL_NAMES:
+        curve = curves.get(channel, [])
+        normalized[channel] = validate_curve_value(curve, f"{label}.{channel}")
+        expanded[channel] = curve
+    return normalized, expanded
+
+
 def validate_coordinate_pair(value: Any, label: str, low: float = 0.0, high: float = 1.0) -> list[float]:
     if not isinstance(value, list) or len(value) != 2:
         raise ValueError(f"{label} must contain two coordinates.")
@@ -186,6 +202,11 @@ def validate_local_adjustments(value: Any, label: str) -> list[dict[str, Any]]:
         for name, raw_value in adjustments.items():
             if name == "curve":
                 normalized_adjustments[name] = validate_curve_value(raw_value, f"{item_label}.adjustments.curve")
+            elif name == "channel_curves":
+                normalized_adjustments[name], _ = validate_channel_curves(
+                    raw_value,
+                    f"{item_label}.adjustments.channel_curves",
+                )
             elif name == "exposure":
                 require_number(raw_value, f"{item_label}.adjustments.{name}", -4.0, 4.0)
             else:
@@ -230,6 +251,7 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
     parameter_fields = {
         "basic",
         "curve",
+        "channel_curves",
         "hsl",
         "color_grading",
         "local_corrections",
@@ -251,6 +273,11 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         expanded_basic[name] = validated
     curve = parameters.get("curve", [])
     normalized["curve"] = validate_curve_value(curve, "recipe.parameters.curve")
+    channel_curves, expanded_channel_curves = validate_channel_curves(
+        parameters.get("channel_curves", {}),
+        "recipe.parameters.channel_curves",
+    )
+    normalized["channel_curves"] = channel_curves
 
     hsl = require_object(parameters.get("hsl", {}), "recipe.parameters.hsl")
     reject_unknown_keys(hsl, set(HUE_CENTERS), "recipe.parameters.hsl")
@@ -331,6 +358,7 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
     expanded_recipe["parameters"] = {
         "basic": expanded_basic,
         "curve": curve,
+        "channel_curves": expanded_channel_curves,
         "hsl": expanded_hsl,
         "color_grading": expanded_grading,
         "local_corrections": local_corrections,
@@ -457,6 +485,8 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
     mn = np.min(values, axis=1)
     saturation = (mx - mn) / np.maximum(mx, 1e-6)
     q = np.percentile(luma, [1, 5, 25, 50, 75, 95, 99])
+    percentile_keys = [1, 5, 25, 50, 75, 95, 99]
+    channel_percentiles = np.percentile(values, percentile_keys, axis=0)
     channel_mean = np.mean(values, axis=0)
     neutral = (saturation < 0.12) & (luma > 0.2) & (luma < 0.95)
     neutral_mean = np.mean(values[neutral], axis=0) if np.any(neutral) else np.array([np.nan] * 3)
@@ -469,9 +499,11 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
         ["bottom-left", "bottom", "bottom-right"],
     ]
     spatial_grid: list[list[float | None]] = []
+    spatial_rgb_grid: list[list[list[float] | None]] = []
     cells: list[tuple[float, int, int]] = []
     for row in range(3):
         row_values: list[float | None] = []
+        row_rgb_values: list[list[float] | None] = []
         y0, y1 = round(row * height / 3), round((row + 1) * height / 3)
         for column in range(3):
             x0, x1 = round(column * width / 3), round((column + 1) * width / 3)
@@ -481,11 +513,32 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
                 mean = round(float(np.mean(cell_luma)), 5)
                 cells.append((mean, row, column))
                 row_values.append(mean)
+                cell_rgb = rgb[y0:y1, x0:x1][cell_visible]
+                row_rgb_values.append([round(float(value), 5) for value in np.mean(cell_rgb, axis=0)])
             else:
                 row_values.append(None)
+                row_rgb_values.append(None)
         spatial_grid.append(row_values)
+        spatial_rgb_grid.append(row_rgb_values)
     brightest = max(cells)
     darkest = min(cells)
+    rgb_channels: dict[str, Any] = {}
+    for channel_index, channel in enumerate(CHANNEL_NAMES):
+        counts, _ = np.histogram(values[:, channel_index], bins=64, range=(0.0, 1.0))
+        histogram = counts.astype(np.float64) / values.shape[0]
+        histogram = np.round(histogram, 10)
+        correction_index = int(np.argmax(histogram))
+        histogram[correction_index] += 1.0 - float(np.sum(histogram))
+        rgb_channels[channel] = {
+            "mean": round(float(channel_mean[channel_index]), 5),
+            "percentiles": {
+                str(percentile): round(float(channel_percentiles[index, channel_index]), 5)
+                for index, percentile in enumerate(percentile_keys)
+            },
+            "low_clip_ratio": round(float(np.mean(values[:, channel_index] <= 0.002)), 6),
+            "high_clip_ratio": round(float(np.mean(values[:, channel_index] >= 0.998)), 6),
+            "histogram_64": [float(value) for value in histogram],
+        }
     return {
         "luma_mean": round(float(np.mean(luma)), 5),
         "luma_percentiles": {str(k): round(float(v), 5) for k, v in zip([1, 5, 25, 50, 75, 95, 99], q)},
@@ -497,9 +550,11 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
         "saturation_mean": round(float(np.mean(saturation)), 5),
         "saturation_p95": round(float(np.percentile(saturation, 95)), 5),
         "channel_mean_rgb": [round(float(v), 5) for v in channel_mean],
+        "rgb_channels": rgb_channels,
         "neutral_candidate_ratio": round(float(np.mean(neutral)), 5),
         "neutral_candidate_mean_rgb": [None if np.isnan(v) else round(float(v), 5) for v in neutral_mean],
         "spatial_luma_grid_3x3": spatial_grid,
+        "spatial_rgb_mean_grid_3x3": spatial_rgb_grid,
         "brightest_cell": {
             "label": labels[brightest[1]][brightest[2]],
             "row": brightest[1],
@@ -624,6 +679,23 @@ def apply_curve(rgb: np.ndarray, specification: str | None) -> np.ndarray:
     return scale_to_luma(rgb, target)
 
 
+def apply_channel_curves(
+    rgb: np.ndarray,
+    specifications: dict[str, str | None] | None,
+) -> np.ndarray:
+    if not specifications or not any(specifications.get(channel) for channel in CHANNEL_NAMES):
+        return rgb
+    result = rgb.copy()
+    for channel_index, channel in enumerate(CHANNEL_NAMES):
+        points = parse_curve(specifications.get(channel))
+        if points is None:
+            continue
+        x, y = points
+        channel_input = np.clip(result[..., channel_index], 0.0, 1.0)
+        result[..., channel_index] = np.interp(channel_input, x, y).astype(np.float32)
+    return result
+
+
 def apply_selective_color(
     rgb: np.ndarray,
     adjustments: dict[str, tuple[float, float, float]],
@@ -704,7 +776,8 @@ def apply_tonal_adjustments(rgb: np.ndarray, parameters: Any) -> np.ndarray:
         parameters.whites,
         parameters.blacks,
     )
-    return apply_curve(result, getattr(parameters, "curve", None))
+    result = apply_curve(result, getattr(parameters, "curve", None))
+    return apply_channel_curves(result, getattr(parameters, "channel_curves", None))
 
 
 def apply_adjustment_bundle(rgb: np.ndarray, parameters: Any) -> np.ndarray:
@@ -725,12 +798,14 @@ def local_parameters(adjustments: dict[str, Any]) -> SimpleNamespace:
         "saturation",
         "vibrance",
         "curve",
+        "channel_curves",
     }
     unknown = set(adjustments) - allowed
     if unknown:
         raise ValueError(f"Unsupported local adjustment keys: {sorted(unknown)}")
-    values = {name: 0.0 for name in allowed if name != "curve"}
+    values = {name: 0.0 for name in allowed if name not in {"curve", "channel_curves"}}
     values["curve"] = None
+    values["channel_curves"] = {}
     values.update(adjustments)
     return SimpleNamespace(**values)
 
@@ -936,6 +1011,16 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
         "recipe_validated": True,
         "before": before,
         "after": image_metrics(check_rgb, check_alpha),
+        "processing": {
+            "curve_working_space": "encoded_srgb_[0,1]",
+            "curve_interpolation": "piecewise_linear",
+            "curve_order": ["master_luma_curve", "rgb_channel_curves"],
+            "active_channel_curves": [
+                channel
+                for channel in CHANNEL_NAMES
+                if settings.channel_curves.get(channel) is not None
+            ],
+        },
     }
     if args.show_parameters:
         result["parameters"] = recipe["parameters"]
@@ -956,9 +1041,30 @@ def compare_images(original: Path, graded: Path) -> dict[str, Any]:
             np.rint(second_alpha * 255.0).astype(np.uint8),
         )
     )
+    channel_difference = None
+    if same_geometry:
+        first_rgb, first_alpha, _ = load_image(original)
+        second_rgb, _, _ = load_image(graded)
+        visible = (
+            np.ones(first_rgb.shape[:2], dtype=bool)
+            if first_alpha is None
+            else first_alpha[..., 0] > 0.01
+        )
+        differences = second_rgb[visible] - first_rgb[visible]
+        absolute = np.abs(differences)
+        channel_difference = {
+            channel: {
+                "mean_signed": round(float(np.mean(differences[:, index])), 6),
+                "mean_absolute": round(float(np.mean(absolute[:, index])), 6),
+                "p95_absolute": round(float(np.percentile(absolute[:, index], 95)), 6),
+                "max_absolute": round(float(np.max(absolute[:, index])), 6),
+            }
+            for index, channel in enumerate(CHANNEL_NAMES)
+        }
     return {
         "original": first,
         "graded": second,
+        "rgb_channel_difference": channel_difference,
         "checks": {
             "same_geometry": same_geometry,
             "same_alpha_presence": same_alpha,

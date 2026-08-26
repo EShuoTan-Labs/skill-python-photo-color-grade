@@ -249,7 +249,7 @@ README 将高光、阴影、白色、黑色描述成顺序阶段，但代码实�
 
 ## 5. 分阶段实施计划
 
-### 阶段 1：RGB 通道曲线与通道分析
+### 阶段 1：RGB 通道曲线与通道分析（已完成）
 
 涉及文件：
 
@@ -291,6 +291,15 @@ README 将高光、阴影、白色、黑色描述成顺序阶段，但代码实�
 - 中性新增字段不能改变旧输出。
 - CI 未通过或旧像素发生任何变化时停止，不进入阶段 2。
 - 建议独立提交：`增加 RGB 通道曲线与通道分析基线`。
+
+#### 阶段 1 交接记录（2026-08-26）
+
+- 实际接口：`schema_version: 1` 的 `parameters.channel_curves.red/green/blue` 均接受空数组或与主曲线相同的控制点；局部 `adjustments.channel_curves` 使用同一结构。`analyze.metrics`、`grade.before/after` 新增 `rgb_channels` 与 `spatial_rgb_mean_grid_3x3`，`grade.processing` 记录曲线技术摘要，`compare.rgb_channel_difference` 提供逐通道差异统计。
+- 关键决定：保留旧主亮度曲线算法；主曲线后在编码 sRGB `[0,1]` 中按 R、G、B 独立执行分段线性插值。只有非空通道才在插值前限制输入定义域；省略或空曲线完全跳过。局部处理同样先主曲线、后通道曲线。
+- 修改文件：`scripts/photo_grade.py`、`references/parameters.md`、`SKILL.md`、`tests/test_legacy_regression.py`、`tests/test_curves_analysis.py`、`tests/test_cli.py`、`.github/workflows/publish-skill.yml`、`.gitignore`、`requirements-dev.txt` 和本交接记录。
+- 验证：修改前冻结 2 个旧特征基线；最终 `pytest` 30 项全部通过，覆盖算法、属性、回归和 CLI；`compileall`、`git diff --check` 通过；Skill `quick_validate.py` 在 Python UTF-8 模式下通过。实际运行 `analyze`、PNG/JPEG `grade` 和 `compare` 均成功。
+- 兼容结果：旧 `grade_pixels` 浮点结果、8 位 PNG 解码像素和旧 JSON 报告子树与修改前基线完全一致；显式中性与省略通道曲线均与源输出逐像素一致；尺寸与 PNG alpha 保持不变；重复 PNG 渲染逐字节一致。
+- 注意事项：仓库及历史没有代表性照片，视觉验收使用确定性的长渐变、单通道色块、阴影/高光和 alpha 合成图；未见新 clipping、色相断裂、banding、通道溢出或渐变断层。旧主亮度曲线对“纯黑像素 + 非零黑端点”的既有行为未更改，以避免破坏旧配方。Windows 默认 GBK 运行验证器会因其未指定编码而失败，使用计划要求的 UTF-8 模式可正常通过。
 
 ### 阶段 2：组合蒙版
 
