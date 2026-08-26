@@ -21,7 +21,6 @@ Apply these in order:
 
 - Start the first pass without asking the user to choose a style or understand controls.
 - For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Always include one faithful natural correction, one clearly creative scene-adaptive interpretation, and at least one bold editorial or cinematic interpretation. One bold result is a minimum, not a quota: when several bold concepts exploit different high-potential readings of the scene, render more than one and let them occupy multiple slots. Add directions only when each introduces a genuinely different and useful idea.
-- For a singular correction such as “提亮一点” or “修正白平衡,” render one faithful result unless the user requests alternatives.
 - Let explicit constraints replace only conflicting defaults. For example, “只要自然版” produces one natural result, “不要胶片” excludes film looks, and a named style or intensity narrows the set.
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
 - Deliver full-quality finals, not proofs, contact sheets, or reduced previews.
@@ -36,7 +35,8 @@ Apply these in order:
 - Do not retouch, transform geometry, synthesize detail, add grain, or simulate depth of field.
 - Enable denoise or sharpening only when justified or requested, and keep them conservative.
 - Treat `detected_format` as authoritative. By default, deliver the same detected format and use `recommended_extension` when the source suffix is misleading. Convert formats only when the user requests it.
-- Choose 16-bit PNG only when retaining a 16-bit sRGB PNG source or when the user requests a high-precision PNG delivery. It cannot restore precision missing from an 8-bit source. PyPNG is required only for 16-bit PNG operations; if unavailable, keep JPEG and 8-bit PNG work running.
+- Choose 16-bit PNG when retaining a 16-bit sRGB PNG source, delivering a high-precision intermediate, or protecting newly shaped gradients from an additional 8-bit quantization. It cannot recover precision already absent from an 8-bit source. For an 8-bit PNG delivery with long smooth gradients, deterministic dithering may reduce visible banding.
+- Ordinary JPEG and 8-bit PNG work does not require PyPNG. Before selecting 16-bit PNG, ensure the pinned dependencies in `requirements.txt` are installed; if PyPNG is unavailable, keep unrelated work running and treat only the requested 16-bit operation as blocked.
 - For strict perceptual or high-bit-depth processing, require a valid conversion to tagged sRGB. Never silently use unmanaged color.
 
 ## Workflow
@@ -62,11 +62,7 @@ Note the reported bit depth, ICC state, detected format, and extension agreement
 
 ### 2. Design the directions
 
-Use [references/parameters.md](references/parameters.md) progressively:
-
-1. Always read `Required internal recipe`, `Intensity and creative range`, `Creative structure and controlled extremes`, and `Basic and tone controls`.
-2. Read a control's complete section before including that control in any recipe.
-3. Read `Local masks`, `Detail and output`, or `Analysis and reports` only when the task uses those capabilities. Do not load unrelated sections.
+Before designing directions or recipes, read [references/parameters.md](references/parameters.md) completely for creative structure, intensity guidance, the required schema, validated ranges, and mask semantics.
 
 For the default set, make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment. Stop when another direction would be cosmetic.
 
@@ -114,7 +110,7 @@ Inspect all variants together. Redesign any pair separated only by cosmetic chan
 
 If a bold result misses its thesis, strengthen the responsible large-scale tone and local-light stages before adding more saturation or texture. If it introduces damage, reduce only the responsible controls. Rerender from the original without asking for confirmation.
 
-Allow at most two corrective rerenders per output. If a bold recipe still fails, abandon it and try the next-ranked bold thesis rather than shipping a conservative fallback. If no bold thesis can be rendered safely, omit it and state the concrete limitation; never loop indefinitely.
+If targeted revisions cannot make a bold recipe meet its thesis safely, abandon it and try the next-ranked bold thesis rather than shipping a conservative fallback.
 
 ### 6. Deliver visible finals
 
