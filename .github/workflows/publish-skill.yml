@@ -34,11 +34,21 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r requirements-dev.txt
 
+      - name: Compile Python sources
+        run: python -m compileall -q scripts tests
+
       - name: Run tests
         run: python -m pytest -q
 
       - name: Smoke-test CLI
-        run: python scripts/photo_grade.py --help
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/photo_grade.py --help
+          python scripts/photo_grade.py analyze tests/test_photo.png > "${RUNNER_TEMP}/analyze.json"
+          python scripts/photo_grade.py compare tests/test_photo.png tests/test_photo.png > "${RUNNER_TEMP}/compare.json"
+          python tests/visual_regression.py --help
+          python tests/visual_regression.py tests --output-dir "${RUNNER_TEMP}/visual-smoke"
 
   publish:
     name: Build and publish skill-python-photo-color-grade.zip

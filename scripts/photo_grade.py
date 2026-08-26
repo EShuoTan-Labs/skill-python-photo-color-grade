@@ -449,7 +449,17 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
     normalized["local_adjustments"] = validate_local_adjustments(local_adjustments, "recipe.parameters.local_adjustments")
 
     detail = require_object(parameters.get("detail", {}), "recipe.parameters.detail")
-    reject_unknown_keys(detail, {"denoise", "sharpen", "sharpen_radius"}, "recipe.parameters.detail")
+    reject_unknown_keys(
+        detail,
+        {
+            "denoise",
+            "sharpen",
+            "sharpen_radius",
+            "sharpen_threshold",
+            "sharpen_edge_protection",
+        },
+        "recipe.parameters.detail",
+    )
     denoise = require_number(detail.get("denoise", 0.0), "recipe.parameters.detail.denoise", 0.0, 1.0)
     sharpen = require_number(detail.get("sharpen", 0.0), "recipe.parameters.detail.sharpen", 0.0, 2.0)
     sharpen_radius = require_number(
@@ -458,9 +468,23 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         0.1,
         5.0,
     )
+    sharpen_threshold = require_number(
+        detail.get("sharpen_threshold", 0.0),
+        "recipe.parameters.detail.sharpen_threshold",
+        0.0,
+        1.0,
+    )
+    sharpen_edge_protection = require_number(
+        detail.get("sharpen_edge_protection", 0.0),
+        "recipe.parameters.detail.sharpen_edge_protection",
+        0.0,
+        1.0,
+    )
     normalized["denoise"] = denoise
     normalized["sharpen"] = sharpen
     normalized["sharpen_radius"] = sharpen_radius
+    normalized["sharpen_threshold"] = sharpen_threshold
+    normalized["sharpen_edge_protection"] = sharpen_edge_protection
 
     output = require_object(parameters.get("output", {}), "recipe.parameters.output")
     reject_unknown_keys(
@@ -502,6 +526,8 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
             "denoise": denoise,
             "sharpen": sharpen,
             "sharpen_radius": sharpen_radius,
+            "sharpen_threshold": sharpen_threshold,
+            "sharpen_edge_protection": sharpen_edge_protection,
         },
         "output": {
             "jpeg_quality": int(jpeg_quality),
@@ -1714,12 +1740,70 @@ def apply_denoise(rgb: np.ndarray, denoise: float) -> np.ndarray:
     return np.clip(result, 0.0, 1.0)
 
 
-def apply_sharpen(rgb: np.ndarray, sharpen: float, radius: float) -> np.ndarray:
+def alpha_aware_gaussian_blur(
+    rgb: np.ndarray,
+    alpha: np.ndarray | None,
+    radius: float,
+) -> np.ndarray:
+    image_filter = ImageFilter.GaussianBlur(radius=radius)
+    if alpha is None:
+        return pil_filter_array(rgb, image_filter)
+    coverage = np.clip(alpha[..., 0], 0.0, 1.0).astype(np.float32, copy=False)
+    premultiplied = rgb * coverage[..., None]
+    blurred_premultiplied = pil_filter_array(premultiplied, image_filter)
+    blurred_coverage = pil_filter_array(
+        np.repeat(coverage[..., None], 3, axis=2),
+        image_filter,
+    )[..., 0]
+    return np.divide(
+        blurred_premultiplied,
+        np.maximum(blurred_coverage[..., None], 1.0 / 255.0),
+        out=rgb.copy(),
+        where=blurred_coverage[..., None] > 1.0 / 255.0,
+    )
+
+
+def expanded_luma_gradient(luma: np.ndarray, radius: float) -> np.ndarray:
+    gradient = luma_gradient(luma)[2]
+    for _ in range(max(1, int(math.ceil(radius)))):
+        _, gradient = local_luma_envelope(gradient)
+    return gradient
+
+
+def apply_sharpen(
+    rgb: np.ndarray,
+    sharpen: float,
+    radius: float,
+    threshold: float = 0.0,
+    edge_protection: float = 0.0,
+    alpha: np.ndarray | None = None,
+) -> np.ndarray:
     result = np.clip(rgb, 0.0, 1.0)
     sharpen = float(np.clip(sharpen, 0.0, 2.0))
-    if sharpen > 0.0:
-        blurred = pil_filter_array(result, ImageFilter.GaussianBlur(radius=float(np.clip(radius, 0.1, 5.0))))
-        result = result + sharpen * (result - blurred)
+    if sharpen <= 0.0:
+        return result
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Sharpening requires finite RGB values.")
+    radius = float(np.clip(radius, 0.1, 5.0))
+    threshold = float(np.clip(threshold, 0.0, 1.0))
+    edge_protection = float(np.clip(edge_protection, 0.0, 1.0))
+    blurred = alpha_aware_gaussian_blur(result, alpha, radius)
+    detail = result - blurred
+    weight = np.ones(result.shape[:2], dtype=np.float32)
+    if threshold > 0.0:
+        detail_magnitude = np.abs(detail @ LUMA)
+        if threshold >= 1.0:
+            weight.fill(0.0)
+        else:
+            transition_end = min(1.0, threshold + max(threshold, 1.0 / 255.0))
+            weight *= smoothstep(threshold, transition_end, detail_magnitude)
+    if edge_protection > 0.0:
+        edge_strength = expanded_luma_gradient(result @ LUMA, radius)
+        strong_edge = smoothstep(0.04, 0.18, edge_strength)
+        weight *= 1.0 - edge_protection * strong_edge
+    result = result + sharpen * detail * weight[..., None]
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Sharpening produced non-finite RGB values.")
     return np.clip(result, 0.0, 1.0)
 
 
@@ -1727,6 +1811,7 @@ def grade_pixels(
     rgb: np.ndarray,
     args: argparse.Namespace,
     diagnostics: dict[str, Any] | None = None,
+    alpha: np.ndarray | None = None,
 ) -> np.ndarray:
     result = apply_denoise(rgb, args.denoise)
     result = apply_tonal_adjustments(result, args)
@@ -1787,7 +1872,16 @@ def grade_pixels(
         mapping_stages.append({"stage": "final", **mapping})
         if diagnostics is not None:
             diagnostics["gamut_mapping_stages"] = mapping_stages
-    result = apply_sharpen(result, args.sharpen, args.sharpen_radius)
+    result = apply_sharpen(
+        result,
+        args.sharpen,
+        args.sharpen_radius,
+        getattr(args, "sharpen_threshold", 0.0),
+        getattr(args, "sharpen_edge_protection", 0.0),
+        alpha,
+    )
+    if not np.all(np.isfinite(result)):
+        raise ValueError("Photo grading produced non-finite RGB values.")
     return np.clip(result, 0.0, 1.0)
 
 
@@ -1919,7 +2013,7 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
     )
     before = image_metrics(rgb, alpha)
     diagnostics: dict[str, Any] = {}
-    graded = grade_pixels(rgb, settings, diagnostics)
+    graded = grade_pixels(rgb, settings, diagnostics, alpha)
     save_image(
         output,
         graded,
@@ -2043,6 +2137,19 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
             "global_order": ["dehaze", "clarity", "texture"],
             "active_global": active_global_presence,
             "active_local": active_local_presence,
+        }
+    active_sharpen_controls = [
+        name
+        for name in ("sharpen_threshold", "sharpen_edge_protection")
+        if abs(float(getattr(settings, name, 0.0))) >= 1e-12
+    ]
+    if settings.sharpen > 0.0 and active_sharpen_controls:
+        result["processing"]["sharpening"] = {
+            "method": "rgb_unsharp_with_luminance_weights",
+            "active_controls": active_sharpen_controls,
+            "threshold_signal": "absolute_luminance_unsharp_residual",
+            "edge_signal": "radius_expanded_luminance_gradient",
+            "alpha_handling": "alpha_aware_blur_rgb_only",
         }
     if args.show_parameters:
         result["parameters"] = recipe["parameters"]

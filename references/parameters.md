@@ -63,7 +63,9 @@ Include every top-level key shown below. Within `parameters`, include only activ
       "blue": {"saturation": 0.08, "luminance": -0.03}
     },
     "detail": {
-      "sharpen": 0.15
+      "sharpen": 0.15,
+      "sharpen_threshold": 0.006,
+      "sharpen_edge_protection": 0.5
     }
   }
 }
@@ -77,7 +79,7 @@ Omitted defaults are:
 - `0` for `presence.dehaze`, `presence.clarity`, and `presence.texture`;
 - `color_management.rendering: "legacy"` and `color_management.gamut_mapping: "clip"`;
 - `[]` for the point curve, each RGB channel curve, and both local-mask arrays;
-- `detail.denoise: 0`, `detail.sharpen: 0`, and `detail.sharpen_radius: 1`;
+- `detail.denoise: 0`, `detail.sharpen: 0`, `detail.sharpen_radius: 1`, `detail.sharpen_threshold: 0`, and `detail.sharpen_edge_protection: 0`;
 - `output.jpeg_quality: 95`, `output.png_compress: 6`, `output.png_bit_depth: 8`, and `output.png_dither: "none"`.
 
 ## Intensity and creative range
@@ -355,12 +357,14 @@ Accepted `detail` and `output` controls and ranges:
 | `detail.denoise` | Early blend with deterministic 3×3 median result | `0` to `1` | `0` off; use `0.05–0.25` cautiously |
 | `detail.sharpen` | Unsharp amount | `0` to `2` | `0` off; use `0.10–0.40` cautiously |
 | `detail.sharpen_radius` | Blur radius used by unsharp | `0.1` to `5` | Commonly `0.6–1.2` |
+| `detail.sharpen_threshold` | Minimum encoded-sRGB luminance residual admitted to sharpening | `0` to `1` | `0` off; use roughly `0.003–0.02` to suppress low-amplitude noise |
+| `detail.sharpen_edge_protection` | Strength of strong-luminance-edge suppression | `0` to `1` | `0` off; use `0.3–0.8` when steps or silhouettes develop rims |
 | `output.jpeg_quality` | JPEG quality | integer `1` to `100` | Use `95` by default |
 | `output.png_compress` | PNG compression level | integer `0` to `9` | Use `6` by default; lossless |
 | `output.png_bit_depth` | PNG samples per RGB/alpha channel | integer `8` or `16` | Use `8` by default; `16` requires a PNG output path |
 | `output.png_dither` | RGB quantization dither | `"none"` or `"tpdf"` | Use `"none"` by default; `"tpdf"` requires 8-bit PNG |
 
-The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested.
+The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested. `sharpen_threshold` gates the absolute luminance component of the unsharp residual with a smooth transition; it is responsible for preventing low-amplitude flat-area noise from being amplified, not for protecting high-contrast boundaries. `sharpen_edge_protection` instead derives a radius-expanded local luminance gradient and attenuates the RGB unsharp increment around strong edges; it is responsible for reducing step-edge overshoot while leaving moderate texture available. A zero value for either field skips its weighting branch exactly, and `sharpen: 0` skips the blur and every sharpening control. The blur is alpha-aware so hidden color behind transparent pixels is not pulled into visible edges; alpha samples themselves are never filtered or sharpened.
 
 For 16-bit PNG, RGB is quantized as `round(clip(value, 0, 1) * 65535)`. Alpha is never graded or dithered: 8-bit source alpha expands exactly as `value * 257`, while retained 16-bit source alpha samples are written unchanged. The isolated PyPNG encoder writes RGB16 or RGBA16, preserves supported ICC, EXIF, DPI, and PNG text metadata, and verifies the IHDR bit depth after writing. PyPNG is loaded only when 16-bit PNG I/O is invoked; when it is unavailable, that operation exits with code `2`, gives the `requirements.txt` install command, and leaves no output, while JPEG and 8-bit PNG commands remain usable. JPEG and 16-bit PNG reject `png_dither: "tpdf"`; JPEG also rejects non-default `png_bit_depth` or `png_dither` settings.
 
@@ -381,6 +385,8 @@ As with legacy metrics, a pixel is visible only when alpha is absent or alpha is
 `grade.processing` reports the fixed curve working space, interpolation, order, and active channel names without exposing curve points unless `--show-parameters` is explicitly set. `compare.rgb_channel_difference` provides signed mean, mean absolute, p95 absolute, and maximum absolute encoded-sRGB differences for each channel when geometry matches.
 
 When any global or local presence control is nonzero, `grade.processing.presence` is added with the fixed working signal, method and global order, the names of active global controls, and each local stage/index with active local control names. It does not expose numeric settings; use `--show-parameters` only when the expanded recipe is explicitly required. For recipes with no active presence control, this optional technical block is omitted so legacy reports retain their prior `processing` structure.
+
+When sharpening is active and either new guard is nonzero, `grade.processing.sharpening` reports the unsharp method, active guard names, luminance signals, and alpha handling without exposing numeric settings. Omitted or all-zero guards do not add this block.
 
 `analyze` adds top-level `bit_depth`, `color_management.icc_status`, `source_extension`, `detected_format`, `extension_matches_format`, and `recommended_extension`; the existing `format` field remains the decoder-detected format. A mismatched supported extension produces a warning, and a supported extension cannot make another payload type valid. Treat the detected format as authoritative when choosing a default output name.
 

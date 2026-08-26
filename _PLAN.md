@@ -515,7 +515,9 @@ README 将高光、阴影、白色、黑色描述成顺序阶段，但代码实�
 - 若必须增加 Log、ACES、1D shaper 或多个 LUT 才能让现有接口正确工作，则停止并另行设计，不在本阶段扩张范围。
 - 建议独立提交：`增加 RGB 原色校准与三维 LUT`。
 
-### 阶段 6：降噪、锐化增强与最终整体回归
+### 阶段 6：锐化增强与最终整体回归（已完成，本次范围收敛）
+
+本次实施以 2026-08-27 用户指定范围为准：不实施阶段 5，不新增亮度/色度降噪，不新增噪声、锐度或边缘密度分析指标；新增 schema 字段仅限 `sharpen_threshold` 与 `sharpen_edge_protection`。项目无须兼容历史配方像素，因此实现优先保证结构清晰、职责明确和中性跳过；现有 `denoise`、`sharpen`、`sharpen_radius` 保留。
 
 涉及文件：
 
@@ -530,39 +532,43 @@ README 将高光、阴影、白色、黑色描述成顺序阶段，但代码实�
 
 实施：
 
-- 保留旧 `detail.denoise` 的 RGB 3×3 中值路径。
-- 新增独立亮度和色度降噪：
-  - 转入 OKLab；
-  - L 使用小半径边缘感知滤波；
-  - a/b 使用由 L 边缘引导的更强色度平滑；
-  - 强度为零时完全跳过；
-  - 不新增半径滑块，由图像尺寸和噪声估计确定固定、可测试尺度。
+- 原样保留 `detail.denoise` 的 RGB 3×3 中值路径，不新增降噪字段或算法。
 - 旧 `sharpen` 和 `sharpen_radius` 继续控制当前 unsharp amount/radius。
-- 新 `sharpen_threshold` 对小于阈值的细节增量置零或平滑衰减。
-- 新 `sharpen_edge_protection` 根据亮度梯度抑制强边缘两侧的增量；默认零时数学路径必须与旧锐化一致。
-- 锐化继续位于所有调色和局部调整之后；不得作用于 alpha。
-- `analyze` 增加可重复的亮度高频残差、色度高频残差和边缘密度指标，帮助 Agent 判断是否启用降噪/锐化。
-- `SKILL.md` 更新为根据新增分析数据决定细节处理，并强调天空、皮肤、细发、建筑边缘的验收；不加入完整参数范围。
-- `visual_regression.py` 从外部指定的、未提交的合法照片目录生成各阶段结果和检查报告；生成文件进入忽略目录，不进入 Skill 发布包。
+- `sharpen_threshold` 对亮度 unsharp 残差执行平滑门限，只负责抑制低幅平坦区噪声。
+- `sharpen_edge_protection` 使用按锐化半径扩张的局部亮度梯度，只负责抑制强边缘两侧增量。
+- 两个新字段分别为零时跳过各自权重分支；`sharpen: 0` 时连模糊与权重计算都跳过。
+- 锐化继续位于所有调色和局部调整之后；RGB 模糊使用 alpha 感知的预乘处理，alpha 样本本身不参与锐化。
+- `SKILL.md` 只增加何时选择两个保护参数及平坦区、细纹理、强边缘、饱和/透明边缘的验收说明，不加入完整范围。
+- `visual_regression.py` 从外部指定的、未提交的合法照片目录生成中性、结构、presence 和阶段 1–4 完整管线结果，同时保存配方、analyze/grade/compare 报告及 SHA-256；生成文件进入已忽略目录且不进入 Skill 发布包。
 
 测试：
 
-- 新字段全为零时，旧 denoise/sharpen 输出逐像素一致。
-- 合成亮度噪声只由亮度降噪显著降低；合成彩色噪声只由色度降噪显著降低。
-- 边缘对比保留率、平坦区噪声降低率和细线损失率采用固定合成图断言。
+- 显式中性完整 schema 的 8 位 RGB 与 alpha 和源文件逐像素一致；新锐化字段为零时与省略字段结果一致。
+- 现有中值降噪在平坦区脉冲噪声上保持有效，不扩展其职责。
 - 锐化阈值必须抑制平坦区噪声；边缘保护必须减少阶跃边缘过冲且保留中等纹理。
 - 验证高光、黑位、饱和边缘和透明边缘不会产生 NaN、彩边或 alpha 变化。
-- 全功能配方覆盖：通道曲线、嵌套蒙版、presence、感知色彩、原色、LUT、降噪、锐化、16 位输出。
+- 完整配方覆盖阶段 1–4 的通道曲线、嵌套蒙版、presence、感知色彩、色域压缩、现有降噪、新锐化和 16 位输出；明确不包含阶段 5 原色或 LUT。
 - CLI 覆盖 analyze→grade→compare，确认旧字段、增量字段、退出码和 `--show-parameters`。
 
 验收与停止条件：
 
-- 合成噪声测试显示目标噪声下降，同时高对比边缘对比保留率不低于测试中冻结的基准阈值。
+- 平坦区门限测试显示锐化后噪声接近源噪声，同时细纹理仍保留冻结的增益比例。
 - 新锐化在测试阶跃边缘上的过冲必须低于相同 amount/radius 的旧锐化。
 - 全功能管线不得改变尺寸或 alpha；所有输出可重开，指标有限。
-- 人工检查至少覆盖人像、夜景、高 ISO、蓝天渐变、树叶/织物、逆光雾景和高饱和霓虹。
+- 仓库内真实照片 smoke 与合成诊断图必须通过；更广的人像、夜景、高 ISO、蓝天、树叶/织物、逆光雾景和霓虹语料由外部视觉回归目录按需补充，不提交照片。
 - 任何明显蜡质皮肤、天空色噪斑、锐化白边、mask seam 或 8 位 banding 均为停止条件。
-- 建议独立提交：`完善降噪锐化并完成整体回归`。
+- 建议独立提交：`增强锐化保护并完成整体回归`。
+
+#### 阶段 6 交接记录（2026-08-27）
+
+- 实现范围：`schema_version: 1` 的 `parameters.detail` 新增且仅新增 `sharpen_threshold`、`sharpen_edge_protection`，均接受有限数值 `[0,1]`、省略时展开为 `0`。保留 `denoise`、`sharpen`、`sharpen_radius`；未实施阶段 5，未增加亮度/色度降噪或任何分析指标。
+- 关键决定：门限读取 RGB unsharp 增量的绝对亮度残差，以固定平滑过渡抑制低幅细节；边缘保护读取按 `ceil(sharpen_radius)` 扩张的 3×3 局部最大亮度梯度，以固定 `0.04–0.18` knee 衰减强边缘增量。两个权重统一作用于 RGB 增量，避免逐通道门限制造彩边。RGBA 模糊采用预乘 RGB/alpha 后反预乘，避免隐藏色污染可见透明边缘；alpha 从不进入锐化结果。
+- 回归基础设施：新增 `tests/visual_regression.py`，递归读取外部 JPEG/PNG，分别从原图生成 A 中性、B 曲线/组合蒙版、C presence、D 阶段 1–4 完整管线四组 PNG；每组保存内部配方、grade/compare 报告、输出哈希，整批保存 analyze 与汇总报告。默认输出位于已忽略的 `tests/output/visual-regression/`，发布工作流继续排除整个 `tests/`。
+- 测试覆盖：新增 `tests/test_detail.py` 与 `tests/test_full_pipeline.py`。门限后的平坦噪声标准差不超过源的 `1.08×` 且低于无门限锐化的 `0.6×`；全保护阶跃过冲低于无保护的 `0.2×`，中等细纹理增益至少保留 `0.75×`。另覆盖现有中值降噪、高光、黑位、饱和边缘、透明隐藏色、中性完整 schema、16 位 RGBA、有限 JSON、重开与 analyze→grade→compare。
+- 验证：修改前 `pytest` 125 项通过；最终 `pytest` 140 项全部通过。`compileall`、`pip check`、`git diff --check`、产品 CLI 帮助/analyze、视觉回归 analyze→grade→compare smoke 及 UTF-8 模式 Skill `quick_validate.py` 通过。CI 增加源码编译和真实四阶段视觉回归 smoke，未增加依赖或产品 CLI 命令。
+- 视觉验收：在仓库 1536×772 水下真实照片上生成四阶段结果并原尺寸查看，4/4 阶段通过尺寸/alpha/重开检查；中性、结构、presence、完整管线的动态范围依次为 `0.21099`、`0.23965`、`0.24094`、`0.25194`，完整管线高光/阴影裁切均为 `0`。未见可见锐化白边、色相折断、结构化噪声、mask seam 或 banding；合成图补足平坦噪声、细纹理、阶跃、高光、黑位、饱和与透明边缘。
+- 修改文件：`scripts/photo_grade.py`、`references/parameters.md`、`SKILL.md`、`README.md`、`tests/test_detail.py`、`tests/test_full_pipeline.py`、`tests/visual_regression.py`、`.github/workflows/publish-skill.yml` 和本交接记录。`requirements*.txt`、`agents/openai.yaml`、图标与 `update.py` 均未修改。
+- 遗留说明：外部照片目录由使用者提供，仓库不提交人像、夜景、高 ISO 等版权或隐私素材；运行器已为这些语料提供可重复的生成与报告路径。本阶段无已知功能缺口。
 
 ## 6. 最终跨阶段回归与视觉验证
 
