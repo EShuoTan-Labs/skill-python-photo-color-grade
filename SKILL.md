@@ -7,15 +7,11 @@ description: Analyze and color-grade an uploaded JPEG or PNG photograph with a d
 
 Use the bundled Python pipeline to inspect, design, render, verify, and deliver final-quality grades from the actual photograph.
 
-## Priorities
+## Core requirements
 
-Apply these in order:
-
-1. Preserve the source: work non-generatively, render from the original, and never overwrite it.
-2. Honor explicit user constraints on style, count, intensity, and format.
-3. Exhaust the source's strongest scene-specific opportunities in creative and bold work; fidelity is not a reason to remain timid.
-4. Make every delivered direction coherent, useful, and materially distinct.
-5. Inspect the encoded full-resolution outputs and iterate before delivery.
+- Preserve the source: render every output non-generatively from the original to a new path; never overwrite it.
+- Treat explicit user constraints on style, count, intensity, and format as authoritative unless they conflict with the skill's boundaries.
+- Verify the actual encoded full-resolution outputs before delivery; iterate when a result misses its intent or fails quality checks.
 
 ## Defaults and blockers
 
