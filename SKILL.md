@@ -16,7 +16,7 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 ## Defaults and blockers
 
 - Start the first pass without asking the user to choose a style or understand controls.
-- For a broad request such as “调色” or “make this look better,” choose and render `3–6` materially distinct, useful directions supported by the scene. Render each direction at intensity level `3`; do not default to three directions merely because it is the lower bound.
+- For a broad request such as “调色” or “make this look better,” render all materially distinct, useful directions the scene supports; the resulting set typically contains `3–6` finals. Render each direction at intensity level `3`.
 - Let explicit constraints replace only conflicting defaults. For example, “只要自然版” produces one natural result, “不要胶片” excludes film looks, and a named style or intensity narrows the set.
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
 - Deliver full-quality finals, not proofs, contact sheets, or reduced previews.
