@@ -177,7 +177,6 @@ def test_perceptual_cli_is_deterministic_and_reports_color_management(tmp_path: 
                 str(output),
                 "--recipe",
                 str(recipe_path),
-                "--skip-update-check",
             ],
             cwd=ROOT,
             capture_output=True,

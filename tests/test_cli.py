@@ -92,7 +92,6 @@ def test_analyze_grade_compare_json_extensions(tmp_path: Path, suffix: str) -> N
         "--recipe",
         str(recipe_path),
         "--show-parameters",
-        "--skip-update-check",
         "--pretty",
     )
     compared = run_cli("compare", str(source), str(output), "--pretty")
@@ -134,7 +133,6 @@ def test_non_16bit_cli_commands_work_without_pypng(tmp_path: Path) -> None:
             str(png_output),
             "--recipe",
             str(png_recipe),
-            "--skip-update-check",
         ),
         run_cli_without_pypng(
             "grade",
@@ -142,7 +140,6 @@ def test_non_16bit_cli_commands_work_without_pypng(tmp_path: Path) -> None:
             str(jpg_output),
             "--recipe",
             str(jpg_recipe),
-            "--skip-update-check",
         ),
         run_cli_without_pypng("compare", str(png_source), str(png_output)),
     ]
@@ -170,7 +167,6 @@ def test_png16_output_without_pypng_fails_cleanly_before_writing(tmp_path: Path)
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 2
@@ -238,7 +234,6 @@ def test_grade_mislabeled_source_with_normalized_extension_preserves_format(
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -266,7 +261,6 @@ def test_grade_explicit_format_conversion_is_reported(tmp_path: Path) -> None:
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -298,7 +292,6 @@ def test_png_alpha_is_preserved_exactly(tmp_path: Path) -> None:
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -352,7 +345,6 @@ def test_composite_mask_cli_is_deterministic_and_preserves_alpha(tmp_path: Path)
         "--recipe",
         str(recipe_path),
         "--show-parameters",
-        "--skip-update-check",
     )
     second = run_cli(
         "grade",
@@ -360,7 +352,6 @@ def test_composite_mask_cli_is_deterministic_and_preserves_alpha(tmp_path: Path)
         str(second_output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert first.returncode == second.returncode == 0
@@ -390,7 +381,6 @@ def test_invalid_recipe_exits_two_before_writing_output(tmp_path: Path, channel_
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 2
@@ -469,7 +459,6 @@ def test_invalid_composite_tree_exits_two_before_writing_output(tmp_path: Path, 
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 2

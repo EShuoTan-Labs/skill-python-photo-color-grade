@@ -229,7 +229,6 @@ def test_explicit_neutral_full_schema_is_exact_for_rgb_and_alpha(tmp_path: Path)
         str(output),
         "--recipe",
         str(recipe_path),
-        "--skip-update-check",
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -257,7 +256,6 @@ def test_cli_analyze_grade_compare_full_pipeline_is_finite_and_preserves_invaria
         "--recipe",
         str(recipe_path),
         "--show-parameters",
-        "--skip-update-check",
         "--pretty",
     )
     compared = run_cli("compare", str(source), str(output), "--pretty")

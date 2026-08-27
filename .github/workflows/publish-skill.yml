@@ -85,14 +85,11 @@ jobs:
             --exclude='skill-python-photo-color-grade.zip' \
             ./ "${package_dir}/"
 
-          printf '%s\n' "${GITHUB_SHA}" > "${package_dir}/.latest_commit"
-
           (
             cd "${package_dir}"
             zip -q -r "${asset_path}" .
           )
 
-          test "$(unzip -p "${asset_path}" .latest_commit)" = "${GITHUB_SHA}"
           printf 'asset_path=%s\n' "${asset_path}" >> "${GITHUB_OUTPUT}"
 
       - name: Replace the GitHub Release asset

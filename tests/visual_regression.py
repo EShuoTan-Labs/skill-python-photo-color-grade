@@ -292,7 +292,6 @@ def run_visual_regression(input_dir: Path, output_dir: Path) -> dict[str, Any]:
                         str(output),
                         "--recipe",
                         str(recipe_path),
-                        "--skip-update-check",
                     ]
                 )
                 stage_entry["compare"] = run_json_command(

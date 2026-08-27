@@ -57,7 +57,7 @@ def test_cli_png16_rgb_and_rgba_are_deterministic_and_alpha_expands_exactly(tmp_
     )
     for output in outputs:
         completed = subprocess.run(
-            [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path), "--skip-update-check"],
+            [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path)],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -85,7 +85,7 @@ def test_16bit_source_round_trips_identity_grade_without_sample_loss(tmp_path: P
         json.dumps(recipe({"output": {"png_bit_depth": 16}})), encoding="utf-8"
     )
     completed = subprocess.run(
-        [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path), "--skip-update-check"],
+        [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -134,7 +134,7 @@ def test_invalid_output_combinations_fail_before_writing(
         json.dumps(recipe({"output": output_parameters})), encoding="utf-8"
     )
     completed = subprocess.run(
-        [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path), "--skip-update-check"],
+        [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path)],
         cwd=ROOT,
         capture_output=True,
         text=True,

@@ -82,10 +82,10 @@ Render each recipe from the original:
 
 ```bash
 python3 <skill-dir>/scripts/photo_grade.py grade <input> <output> \
-  --recipe <internal-recipe.json> --skip-update-check
+  --recipe <internal-recipe.json>
 ```
 
-Keep each complete JSON report attributable to its output. Parallel rendering is allowed only when reports cannot become mixed. Check for skill updates only when the user explicitly asks; never couple maintenance traffic to photo rendering.
+Keep each complete JSON report attributable to its output. Parallel rendering is allowed only when reports cannot become mixed.
 
 Name each file `<original-stem>_<style-id><intensity>_<direction-description><extension>`, for example `IMG_1234_A3_自然通透.jpg`.
 

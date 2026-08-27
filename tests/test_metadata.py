@@ -14,7 +14,7 @@ from test_legacy_regression import ROOT, SCRIPT, load_module, recipe
 
 def run_grade(source: Path, output: Path, recipe_path: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path), "--skip-update-check"],
+        [sys.executable, str(SCRIPT), "grade", str(source), str(output), "--recipe", str(recipe_path)],
         cwd=ROOT,
         capture_output=True,
         text=True,

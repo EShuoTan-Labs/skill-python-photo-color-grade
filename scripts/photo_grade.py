@@ -10,9 +10,7 @@ import json
 import math
 import platform
 import re
-import subprocess
 import sys
-from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -74,7 +72,6 @@ LOCAL_ADJUSTMENT_FIELDS = BASIC_FIELDS | {"curve", "channel_curves"} | LOCAL_PRE
 COMPOSITE_MASK_OPERATIONS = {"and", "or", "subtract"}
 MAX_MASK_DEPTH = 6
 MAX_MASK_LEAVES = 32
-SKILL_ROOT = Path(__file__).resolve().parent.parent
 SRGB_TO_XYZ = np.array(
     [
         [0.4124564, 0.3575761, 0.1804375],
@@ -103,27 +100,6 @@ LMS_CUBERT_TO_OKLAB = np.array(
 )
 OKLAB_TO_LMS_CUBERT = np.linalg.inv(LMS_CUBERT_TO_OKLAB)
 LMS_TO_XYZ = np.linalg.inv(XYZ_TO_LMS)
-
-
-def check_for_update() -> str | None:
-    """Return the updater message only when a newer skill version exists."""
-    try:
-        result = subprocess.run(
-            [sys.executable, "update.py"],
-            cwd=SKILL_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=12,
-        )
-        if result.returncode != 0:
-            return None
-        payload = json.loads(result.stdout)
-        if payload.get("NEED_UPDATE") is not True:
-            return None
-        message = payload.get("MESSAGE")
-        return message.strip() if isinstance(message, str) and message.strip() else None
-    except Exception:
-        return None
 
 
 def require_object(value: Any, label: str) -> dict[str, Any]:
@@ -2223,11 +2199,6 @@ def add_grade_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Include final recipe parameters in the report only when explicitly requested",
     )
-    parser.add_argument(
-        "--skip-update-check",
-        action="store_true",
-        help="Skip the best-effort update check when another grade in this batch already performs it",
-    )
     parser.add_argument("--pretty", action="store_true")
 
 
@@ -2249,27 +2220,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    update_future: Future[str | None] | None = None
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="skill-update") as executor:
-        if args.command == "grade" and not args.skip_update_check:
-            update_future = executor.submit(check_for_update)
-        try:
-            if args.command == "analyze":
-                report = analyze(Path(args.input).resolve())
-            elif args.command == "grade":
-                settings, recipe = load_recipe(Path(args.recipe))
-                report = run_grade(args, settings, recipe)
-            else:
-                report = compare_images(Path(args.original).resolve(), Path(args.graded).resolve())
-            if update_future is not None:
-                update_message = update_future.result()
-                if update_message is not None:
-                    report["MESSAGE"] = update_message
-            print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
-            return 0
-        except Exception as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 2
+    try:
+        if args.command == "analyze":
+            report = analyze(Path(args.input).resolve())
+        elif args.command == "grade":
+            settings, recipe = load_recipe(Path(args.recipe))
+            report = run_grade(args, settings, recipe)
+        else:
+            report = compare_images(Path(args.original).resolve(), Path(args.graded).resolve())
+        print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
+        return 0
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -148,7 +148,6 @@ def test_legacy_png_pixels_and_report_subtree_are_exact(tmp_path: Path) -> None:
             str(output),
             "--recipe",
             str(recipe_path),
-            "--skip-update-check",
         ],
         cwd=ROOT,
         capture_output=True,
