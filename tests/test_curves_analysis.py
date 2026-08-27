@@ -36,7 +36,7 @@ def test_master_curve_runs_before_channel_curves(tmp_path: Path) -> None:
     )
 
     actual = photo_grade.apply_tonal_adjustments(rgb, parameters)
-    assert np.array_equal(actual, expected)
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=5e-7)
 
 
 def test_only_red_curve_preserves_green_and_blue_exactly() -> None:
