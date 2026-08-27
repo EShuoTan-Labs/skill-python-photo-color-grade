@@ -58,7 +58,7 @@ Note the reported bit depth, ICC state, detected format, and extension agreement
 
 ### 2. Design the directions
 
-Before designing directions or recipes, read [references/parameters.md](references/parameters.md) completely for creative structure, intensity guidance, the required schema, validated ranges, and mask semantics.
+Before designing directions or recipes, read [references/capabilities-and-recipes.md](references/capabilities-and-recipes.md) completely. It is the authoritative capability map and recipe contract, not a checklist of controls to activate. Read [references/technical-behavior.md](references/technical-behavior.md) only when selecting a strict color-management, high-bit-depth, or dithering path; diagnosing artifacts or failures; interpreting extended reports; or explaining implementation details.
 
 For the default set, choose directions from the scene's strongest opportunities rather than filling fixed categories. A useful set may range from faithful natural correction through creative scene-adaptive work to bold editorial or cinematic interpretations; these are reference points, not required slots. Make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment.
 

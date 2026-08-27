@@ -87,7 +87,7 @@ python3 scripts/photo_grade.py grade input.jpg output_graded.jpg \
 python3 scripts/photo_grade.py compare input.jpg output_graded.jpg --pretty
 ```
 
-完整参数说明见 [`references/parameters.md`](references/parameters.md)。
+完整能力与配方说明见 [`references/capabilities-and-recipes.md`](references/capabilities-and-recipes.md)；算法、编码和报告实现细节见 [`references/technical-behavior.md`](references/technical-behavior.md)。
 
 ## 回归验证
 

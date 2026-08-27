@@ -1,10 +1,13 @@
-# Parameter Reference
+# Capability and Recipe Reference
+
+Read this reference completely before designing directions or recipes. It is the authoritative map of what the pipeline can do and the contract for expressing those decisions. It is a toolbox, not a checklist: define the visual intent first, then activate only the controls that materially serve it. Omitted controls stay neutral.
 
 ## Contents
 
-- [Required internal recipe](#required-internal-recipe)
+- [Capability map](#capability-map)
 - [Intensity and creative range](#intensity-and-creative-range)
 - [Creative structure and controlled extremes](#creative-structure-and-controlled-extremes)
+- [Recipe contract](#recipe-contract)
 - [Basic and tone controls](#basic-and-tone-controls)
 - [Point curve](#point-curve)
 - [RGB channel curves](#rgb-channel-curves)
@@ -14,11 +17,69 @@
 - [Color grading](#color-grading)
 - [Local masks](#local-masks)
 - [Detail and output](#detail-and-output)
-- [Analysis and reports](#analysis-and-reports)
 
-## Required internal recipe
+## Capability map
 
-Include every top-level key shown below. Within `parameters`, include only active sections and controls. The script expands omitted controls to deterministic neutral defaults and rejects unknown fields.
+Choose controls from the photograph's actual visual needs. Combining several families is valid when they serve one coherent intent; the presence of a control in this map is never a reason to activate it.
+
+| Visual need | Primary tools | Use with care |
+|---|---|---|
+| Correct exposure or white balance | `basic.exposure`, `temperature`, `tint`, highlights/shadows/whites/blacks | Do not neutralize intentional color or infer white balance from global RGB averages alone |
+| Build global tonal hierarchy | Basic tone controls and the main `curve` | Protect important subject structure; intentional localized clipping is allowed |
+| Shape channel-specific blacks, midtones, or highlights | `channel_curves` | Endpoint moves can tint neutral blacks or whites |
+| Recover atmospheric, mid-scale, or fine-scale separation | `presence.dehaze`, `clarity`, `texture` | These controls operate at different scales and are not substitutes for exposure, sharpening, or denoise |
+| Separate or redirect existing colors | `hsl`, vibrance, saturation | Change only visibly relevant ranges and protect credible neutrals and skin |
+| Build shadow/midtone/highlight palette separation | `color_grading` | Avoid a uniform global hue wash |
+| Shape existing light or focal hierarchy locally | `local_corrections`, `local_adjustments`, geometric/luminance/color masks | Keep geometry consistent with source evidence; masks are not semantic selections |
+| Control noise and output detail | `detail.denoise`, `sharpen`, threshold, edge protection | Keep off unless technically justified; inspect encoded detail at 100% |
+| Improve perceptual color shaping or gamut behavior | `color_management.rendering`, `gamut_mapping` | Strict paths require managed tagged-sRGB conversion |
+| Preserve output precision or reduce gradient banding | `output.png_bit_depth`, `png_dither` | 16-bit cannot restore missing source precision; dithering applies only to 8-bit PNG |
+
+## Intensity and creative range
+
+Choose intensity from the intended perceptual result and source latitude before consulting any parameter baseline:
+
+| Level | Intended result | Typical strategy |
+|---|---|---|
+| `1` | Close to source | Correct cast/exposure, gentle curve, minimal HSL |
+| `2` | Clearly styled | Distinct curve and palette, selective HSL, optional subtle local shaping |
+| `3` natural | Polished but faithful | Stronger correction without changing the scene's emotional key |
+| `3` creative/bold | Obvious authorship at first glance | Decisive curve, controlled deep blacks or brilliant highlights, clear dominant palette, color separation, and local light design where useful |
+
+For a level-3 creative or bold choice, values may move beyond the natural/correction baselines below when the source supports them. Prefer coordinated moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
+
+For a bold recipe, complete `visual_intent` and its three to five observable success criteria before choosing parameters. After rendering, strengthen only the stages responsible for any unmet criterion. Never weaken a bold selection merely because it differs strongly from the source.
+
+## Creative structure and controlled extremes
+
+Build the tonal architecture before polishing the palette. A cinematic result must not depend on color alone.
+
+| Visual need | Prefer |
+|---|---|
+| Establish global light/dark hierarchy | Exposure, whites/blacks, contrast, point curve |
+| Extend an existing directional light source | Broad linear mask aligned with the source, then a feathered radial refinement if useful |
+| Separate a focal region from negative space | Coordinated focal dodge and restrained inverted radial or edge burn |
+| Make reflective texture luminous | Whites/highlights plus a luminance mask; accept localized brilliance when intentional |
+| Separate foreground and background color | HSL luminance/saturation plus three-way grading |
+| Create filmic softness without flatness | Lift the black endpoint selectively while retaining midtone shape and local contrast |
+
+Use the smallest mask set that expresses the light design. A single undirected center radial is not a substitute for a directional concept. Do not invent a light direction that contradicts the source; when the source is flat, use broad plausible zoning rather than fake hard beams.
+
+Run these anti-filter checks before accepting a level-3 creative render:
+
+- In a mental grayscale preview, does the light hierarchy remain distinctive?
+- Is the focal region separated by more than saturation alone?
+- Did one global hue wash contaminate neutrals, skin, or reflective surfaces?
+- Are local masks shaping light, or merely making the center brighter?
+- Does the result show a clear concept at first glance without the original beside it?
+
+Do not optimize for zero clipping. Controlled localized specular clipping, near-white reflective highlights, or deep near-black negative space can be intentional. Reject broad accidental clipping, posterization, hue breakage, lost facial/subject structure, or crushed texture across important regions. Judge the spatial location and visual purpose of extremes, not only their global ratio.
+
+## Recipe contract
+
+### Illustrative full recipe
+
+The following recipe demonstrates the complete structure and how several control families can work together. It is not a default recipe or a checklist. Copy the required structural fields, but include a parameter section only when the photograph and visual intent justify it.
 
 ```json
 {
@@ -81,46 +142,6 @@ Omitted defaults are:
 - `[]` for the point curve, each RGB channel curve, and both local-mask arrays;
 - `detail.denoise: 0`, `detail.sharpen: 0`, `detail.sharpen_radius: 1`, `detail.sharpen_threshold: 0`, and `detail.sharpen_edge_protection: 0`;
 - `output.jpeg_quality: 95`, `output.png_compress: 6`, `output.png_bit_depth: 8`, and `output.png_dither: "none"`.
-
-## Intensity and creative range
-
-Choose intensity from the intended perceptual result and source latitude before consulting any parameter baseline:
-
-| Level | Intended result | Typical strategy |
-|---|---|---|
-| `1` | Close to source | Correct cast/exposure, gentle curve, minimal HSL |
-| `2` | Clearly styled | Distinct curve and palette, selective HSL, optional subtle local shaping |
-| `3` natural | Polished but faithful | Stronger correction without changing the scene's emotional key |
-| `3` creative/bold | Obvious authorship at first glance | Decisive curve, controlled deep blacks or brilliant highlights, clear dominant palette, color separation, and local light design where useful |
-
-For a level-3 creative or bold choice, values may move beyond the natural/correction baselines below when the source supports them. Prefer coordinated moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
-
-For a bold recipe, complete `visual_intent` and its three to five observable success criteria before choosing parameters. After rendering, strengthen only the stages responsible for any unmet criterion. Never weaken a bold selection merely because it differs strongly from the source.
-
-## Creative structure and controlled extremes
-
-Build the tonal architecture before polishing the palette. A cinematic result must not depend on color alone.
-
-| Visual need | Prefer |
-|---|---|
-| Establish global light/dark hierarchy | Exposure, whites/blacks, contrast, point curve |
-| Extend an existing directional light source | Broad linear mask aligned with the source, then a feathered radial refinement if useful |
-| Separate a focal region from negative space | Coordinated focal dodge and restrained inverted radial or edge burn |
-| Make reflective texture luminous | Whites/highlights plus a luminance mask; accept localized brilliance when intentional |
-| Separate foreground and background color | HSL luminance/saturation plus three-way grading |
-| Create filmic softness without flatness | Lift the black endpoint selectively while retaining midtone shape and local contrast |
-
-Use the smallest mask set that expresses the light design. A single undirected center radial is not a substitute for a directional concept. Do not invent a light direction that contradicts the source; when the source is flat, use broad plausible zoning rather than fake hard beams.
-
-Run these anti-filter checks before accepting a level-3 creative render:
-
-- In a mental grayscale preview, does the light hierarchy remain distinctive?
-- Is the focal region separated by more than saturation alone?
-- Did one global hue wash contaminate neutrals, skin, or reflective surfaces?
-- Are local masks shaping light, or merely making the center brighter?
-- Does the result show a clear concept at first glance without the original beside it?
-
-Do not optimize for zero clipping. Controlled localized specular clipping, near-white reflective highlights, or deep near-black negative space can be intentional. Reject broad accidental clipping, posterization, hue breakage, lost facial/subject structure, or crushed texture across important regions. Judge the spatial location and visual purpose of extremes, not only their global ratio.
 
 ## Basic and tone controls
 
@@ -194,11 +215,9 @@ This order also applies inside each local adjustment: local main curve first, th
 | `clarity` | Mid-frequency, midtone-weighted local contrast | Use for architecture, landscape structure, or dimensional separation; ordinary range `0.05–0.30`. Negative values soften mid-scale structure. |
 | `texture` | Small-scale detail gain with a spatial-coherence noise gate | Use for foliage, fabric, stone, or fine reflective detail; ordinary range `0.04–0.25`. Negative values soften fine texture without replacing denoise. |
 
-The fixed global order is `dehaze` → `clarity` → `texture`, after `local_corrections` and before vibrance, saturation, HSL, and color grading. The implementation performs deterministic NumPy `float32` luminance decomposition with edge-extended floating-point box filters; it does not round-trip through an 8-bit Pillow filter image. Filter scale is derived only from image dimensions and is capped, so repeated runs with the same inputs and dependency versions are deterministic.
+The fixed global order is `dehaze` → `clarity` → `texture`, after `local_corrections` and before vibrance, saturation, HSL, and color grading.
 
-All three controls reconstruct RGB from adjusted encoded-sRGB luminance instead of independently sharpening R, G, and B. A highlight/shadow envelope, strong-gradient guard, and local 3×3 luminance envelope limit halos and full-strength step-edge overshoot/undershoot to at most `0.02`. Clarity and texture additionally use signed-gradient coherence to reduce amplification of random residuals in flat regions. Dehaze applies a small, gamut-constrained chroma factor while preserving the source hue vector; constant images remain unchanged.
-
-Use the three controls for distinct scales rather than stacking them by default. Dehaze is not a substitute for exposure or black-point work, clarity is not output sharpening, and texture is not denoise. Strong positive values may reveal existing noise or compression artifacts even with the guards, so inspect smooth skies, skin, foliage, building edges, and backlit haze at full resolution.
+Use the three controls for distinct scales rather than stacking them by default. Dehaze is not a substitute for exposure or black-point work, clarity is not output sharpening, and texture is not denoise. Strong positive values may reveal existing noise or compression artifacts, so inspect smooth skies, skin, foliage, building edges, and backlit haze at full resolution.
 
 ## Color management
 
@@ -223,16 +242,9 @@ The omitted/default pair is the compatibility path and does not change legacy pi
 - the full validated HSL saturation range through `+1.5` is effective in this path;
 - three-way grading adds color on the OKLab opponent axes and preserves OKLab lightness.
 
-`oklch_compress` uses a fixed OKLCh chroma knee of `0.10` and shoulder of `0.08`, plus a deterministic 24-iteration binary search for the per-pixel in-gamut safety boundary. The fixed response avoids turning the non-convex blue edge of the sRGB gamut into a visible contour. It preserves in-range OKLCh lightness and hue while reducing chroma; neutral colors keep zero chroma and do not receive an arbitrary hue. Gamut mapping runs after global color shaping and again after creative local adjustments. Processing rejects NaN or infinity at color-conversion and gamut boundaries rather than silently replacing invalid values.
+`oklch_compress` preserves in-range OKLCh lightness and hue while reducing excess chroma. Gamut mapping runs after global color shaping and again after creative local adjustments.
 
-The strict ICC behavior applies when perceptual rendering, OKLCh compression, or 16-bit PNG output is selected:
-
-- an absent profile is explicitly treated as sRGB and the output is tagged with sRGB ICC;
-- a valid 8-bit source profile is converted to sRGB before grading; CMYK conversion starts from the original CMYK image mode;
-- conversion failure is an error before output creation;
-- a 16-bit PNG with no ICC or an sRGB ICC retains 16-bit samples, while a non-sRGB or invalid ICC is rejected with an instruction to convert externally to sRGB16.
-
-The legacy path keeps its prior fallback pixel behavior if ICC conversion fails and adds a `warnings` report entry. Unknown fields, non-string modes, or values outside the enumerations are validation errors. Recipe validation and all strict ICC checks finish before a new output is written.
+Perceptual rendering, OKLCh compression, and 16-bit PNG use strict tagged-sRGB handling and may block on invalid or unsupported profile conversion. Before selecting one of these paths, read [technical-behavior.md](technical-behavior.md#color-management-and-icc) for the exact ICC behavior.
 
 ## HSL
 
@@ -366,30 +378,8 @@ Accepted `detail` and `output` controls and ranges:
 | `output.png_bit_depth` | PNG samples per RGB/alpha channel | integer `8` or `16` | Use `8` by default; `16` requires a PNG output path |
 | `output.png_dither` | RGB quantization dither | `"none"` or `"tpdf"` | Use `"none"` by default; `"tpdf"` requires 8-bit PNG |
 
-The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested. `sharpen_threshold` gates the absolute luminance component of the unsharp residual with a smooth transition; it is responsible for preventing low-amplitude flat-area noise from being amplified, not for protecting high-contrast boundaries. `sharpen_edge_protection` instead derives a radius-expanded local luminance gradient and attenuates the RGB unsharp increment around strong edges; it is responsible for reducing step-edge overshoot while leaving moderate texture available. A zero value for either field skips its weighting branch exactly, and `sharpen: 0` skips the blur and every sharpening control. The blur is alpha-aware so hidden color behind transparent pixels is not pulled into visible edges; alpha samples themselves are never filtered or sharpened.
+The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested. Use `sharpen_threshold` to suppress low-amplitude residuals such as noise, and `sharpen_edge_protection` to reduce rims around strong edges.
 
-For 16-bit PNG, RGB is quantized as `round(clip(value, 0, 1) * 65535)`. Alpha is never graded or dithered: 8-bit source alpha expands exactly as `value * 257`, while retained 16-bit source alpha samples are written unchanged. The isolated PyPNG encoder writes RGB16 or RGBA16, preserves supported ICC, EXIF, DPI, and PNG text metadata, and verifies the IHDR bit depth after writing. PyPNG is loaded only when 16-bit PNG I/O is invoked; when it is unavailable, that operation exits with code `2`, gives the `requirements.txt` install command, and leaves no output, while JPEG and 8-bit PNG commands remain usable. JPEG and 16-bit PNG reject `png_dither: "tpdf"`; JPEG also rejects non-default `png_bit_depth` or `png_dither` settings.
+For 16-bit PNG, the pipeline writes RGB16 or RGBA16 and preserves supported metadata; it cannot restore precision absent from the source. For 8-bit PNG, `png_dither: "tpdf"` adds deterministic zero-mean triangular noise before quantization and never touches alpha. Use it only for long smooth gradients that show or risk visible banding.
 
-For 8-bit PNG, `png_dither: "tpdf"` adds deterministic coordinate-hashed, zero-mean triangular noise to encoded-sRGB RGB immediately before quantization. It has no configurable seed or strength, never touches alpha, and produces byte-identical output for the same input, recipe, and dependency versions. Use it only when long smooth gradients show or risk visible 8-bit platforms; it does not restore precision already absent from an 8-bit source.
-
-## Analysis and reports
-
-`analyze.metrics`, plus the `before` and `after` metric objects returned by `grade`, retain all legacy fields and add:
-
-- `rgb_channels.red|green|blue.mean`: visible-pixel channel mean.
-- `rgb_channels.*.percentiles`: visible-pixel `1`, `5`, `25`, `50`, `75`, `95`, and `99` percentiles.
-- `rgb_channels.*.low_clip_ratio` and `high_clip_ratio`: independent channel clipping ratios using the legacy thresholds `<= 0.002` and `>= 0.998`.
-- `rgb_channels.*.histogram_64`: 64 normalized bins spanning encoded sRGB `[0,1]`; each channel sums to `1` within floating-point representation.
-- `spatial_rgb_mean_grid_3x3`: row-major 3×3 cells, each containing `[red, green, blue]` means or `null` when the cell has no visible pixels.
-
-As with legacy metrics, a pixel is visible only when alpha is absent or alpha is greater than `0.01`. These arrays are intended for machine-readable cast, channel clipping, tonal separation, and spatial color-balance decisions; `analyze` does not create parade images.
-
-`grade.processing` reports the fixed curve working space, interpolation, order, and active channel names without exposing curve points unless `--show-parameters` is explicitly set. `compare.rgb_channel_difference` provides signed mean, mean absolute, p95 absolute, and maximum absolute encoded-sRGB differences for each channel when geometry matches.
-
-When any global or local presence control is nonzero, `grade.processing.presence` is added with the fixed working signal, method and global order, the names of active global controls, and each local stage/index with active local control names. It does not expose numeric settings; use `--show-parameters` only when the expanded recipe is explicitly required. For recipes with no active presence control, this optional technical block is omitted so legacy reports retain their prior `processing` structure.
-
-When sharpening is active and either new guard is nonzero, `grade.processing.sharpening` reports the unsharp method, active guard names, luminance signals, and alpha handling without exposing numeric settings. Omitted or all-zero guards do not add this block.
-
-`analyze` adds top-level `bit_depth`, `color_management.icc_status`, `source_extension`, `detected_format`, `extension_matches_format`, and `recommended_extension`; the existing `format` field remains the decoder-detected format. A mismatched supported extension produces a warning, and a supported extension cannot make another payload type valid. Treat the detected format as authoritative when choosing a default output name.
-
-`grade` repeats the source format fields and adds `output_format_conversion`, which is `null` when the detected format is preserved or a `{ "from": ..., "to": ... }` object when the caller-selected output suffix explicitly converts it. `grade.output_encoding` reports actual format, extension agreement, input and output bit depth, dither mode, input/output ICC state, and Python/NumPy/Pillow/PyPNG versions. When a new color-management path is active, `grade.processing.color_management` reports rendering and gamut modes, mapping stages, and the maximum pre-map plus final post-map out-of-gamut pixel ratios. `compare.output_encoding_difference` summarizes both bit depths and ICC states without changing the existing `checks` meanings. The optional `warnings` array is present for a recoverable legacy ICC fallback, source extension mismatch, or explicit output format conversion.
+Before selecting 16-bit PNG or dithering, read [technical-behavior.md](technical-behavior.md#detail-and-output-encoding) for dependency, compatibility, quantization, alpha, and encoder behavior.
