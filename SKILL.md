@@ -20,7 +20,7 @@ Apply these in order:
 ## Defaults and blockers
 
 - Start the first pass without asking the user to choose a style or understand controls.
-- For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Always include one faithful natural correction, one clearly creative scene-adaptive interpretation, and at least one bold editorial or cinematic interpretation. One bold result is a minimum, not a quota: when several bold concepts exploit different high-potential readings of the scene, render more than one and let them occupy multiple slots. Add directions only when each introduces a genuinely different and useful idea.
+- For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Choose the count from the number of materially distinct, useful directions the source supports; do not default to the lower bound simply because a reference spectrum has been covered.
 - Let explicit constraints replace only conflicting defaults. For example, “只要自然版” produces one natural result, “不要胶片” excludes film looks, and a named style or intensity narrows the set.
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
 - Deliver full-quality finals, not proofs, contact sheets, or reduced previews.
@@ -64,9 +64,9 @@ Note the reported bit depth, ICC state, detected format, and extension agreement
 
 Before designing directions or recipes, read [references/parameters.md](references/parameters.md) completely for creative structure, intensity guidance, the required schema, validated ranges, and mask semantics.
 
-For the default set, make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment. Stop when another direction would be cosmetic.
+For the default set, choose directions from the scene's strongest opportunities rather than filling fixed categories. A useful set may range from faithful natural correction through creative scene-adaptive work to bold editorial or cinematic interpretations; these are reference points, not required slots. Make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment.
 
-Before writing bold recipes, generate `3–5` scene-specific blockbuster theses internally. Vary the narrative and large-scale tonal architecture, not merely the palette. Explore different ways to amplify existing light, turn negative space and depth into scale, strengthen the relationship or motion between subjects, and reinterpret the scene's dominant color contrast. Select and render the strongest `1–3`; when candidates are similarly strong but genuinely distinct, keep multiple bold outputs instead of forcing an arbitrary single winner.
+When bold work is supported, generate `3–5` scene-specific blockbuster theses internally before writing recipes. Vary the narrative and large-scale tonal architecture, not merely the palette. Explore different ways to amplify existing light, turn negative space and depth into scale, strengthen the relationship or motion between subjects, and reinterpret the scene's dominant color contrast. Select and render the strongest `1–3` when they express genuinely different and useful readings of the scene. Stop when another direction would be cosmetic.
 
 Build tonal architecture before polishing color. Preserve the scene's evidence, then amplify its strongest premise decisively. When the source offers bright focal surfaces, reflections, or caustics against open negative space, deliberately extend toward brilliant localized highlights and deep supporting tones; controlled local clipping and near-black regions are acceptable when important structure survives. A high-key, hazy, muted, or low-contrast blockbuster is valid only when its large-scale hierarchy, depth, focal separation, and emotional scale are still unmistakably authored. “Preserving the mood” must never justify a merely safer grade.
 
