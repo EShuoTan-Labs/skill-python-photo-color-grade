@@ -16,17 +16,16 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 ## Defaults and blockers
 
 - Start the first pass without asking the user to choose a style or understand controls.
-- For a broad request such as “调色” or “make this look better,” render `3–6` intensity-`3` finals. Choose the count from the number of materially distinct, useful directions the source supports; do not default to the lower bound simply because a reference spectrum has been covered.
+- For a broad request such as “调色” or “make this look better,” render all materially distinct, useful directions the source supports, typically `3–6` intensity-`3` finals.
 - Let explicit constraints replace only conflicting defaults. For example, “只要自然版” produces one natural result, “不要胶片” excludes film looks, and a named style or intensity narrows the set.
 - Label styles sequentially with uppercase letters (`A`, `B`, `C`); label intensity with digits (`1`, `2`, `3`). Never swap these roles.
 - Deliver full-quality finals, not proofs, contact sheets, or reduced previews.
 - Block only when no valid output can be produced: missing, corrupt, undecodable, or unsupported input; a required dependency or permission failure; a script or color-conversion failure; insufficient resources; or irreconcilable instructions. Report the actionable cause instead of asking for an aesthetic choice.
-- If incomplete or ambiguous skill documentation forces you to inspect implementation code to proceed, finish the photo task when safe, then tell the user what was undocumented and what behavior you confirmed so the skill can be improved. Routine use should not require reading code.
 
 ## Boundaries
 
 - Accept JPEG and PNG only. Use the uploaded file, not a screenshot or reduced substitute.
-- Render each recipe from the original to a new path. Never stack a new grade onto an exported result.
+- Never stack a new grade onto an exported result.
 - Use only the bundled deterministic controls and geometric, luminance, or color masks. Never use image generation, inpainting, semantic segmentation, content-aware editing, or claimed subject/sky masks.
 - Do not retouch, transform geometry, synthesize detail, add grain, or simulate depth of field.
 - Enable denoise or sharpening only when justified or requested, and keep them conservative.
@@ -60,11 +59,11 @@ Note the reported bit depth, ICC state, detected format, and extension agreement
 
 Before designing directions or recipes, read [references/capabilities-and-recipes.md](references/capabilities-and-recipes.md) completely. It is the authoritative capability map and recipe contract, not a checklist of controls to activate. Read [references/technical-behavior.md](references/technical-behavior.md) only when selecting a strict color-management, high-bit-depth, or dithering path; diagnosing artifacts or failures; interpreting extended reports; or explaining implementation details.
 
-For the default set, choose directions from the scene's strongest opportunities rather than filling fixed categories. A useful set may range from faithful natural correction through creative scene-adaptive work to bold editorial or cinematic interpretations; these are reference points, not required slots. Make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment.
+For the default set, choose directions from the scene's strongest opportunities rather than filling fixed categories. Include at least one bold editorial or cinematic interpretation. Faithful natural correction and creative scene-adaptive work are useful reference points, not required one-per-category slots. Make every pair differ on at least two primary axes: exposure key, contrast structure, palette, saturation strategy, local-light design, depth treatment, or texture treatment.
 
-When bold work is supported, generate `3–5` scene-specific blockbuster theses internally before writing recipes. Vary the narrative and large-scale tonal architecture, not merely the palette. Explore different ways to amplify existing light, turn negative space and depth into scale, strengthen the relationship or motion between subjects, and reinterpret the scene's dominant color contrast. Select and render the strongest `1–3` when they express genuinely different and useful readings of the scene. Stop when another direction would be cosmetic.
+Before writing bold recipes, generate `3–5` scene-specific bold visual theses internally. Vary the narrative and large-scale tonal architecture, not merely the palette. Explore different ways to amplify existing light, turn negative space and depth into scale, strengthen the relationship or motion between subjects, and reinterpret the scene's dominant color contrast. Select and render the strongest `1–3` when they express genuinely different and useful readings of the scene. Stop when another direction would be cosmetic.
 
-Build tonal architecture before polishing color. Preserve the scene's evidence, then amplify its strongest premise decisively. When the source offers bright focal surfaces, reflections, or caustics against open negative space, deliberately extend toward brilliant localized highlights and deep supporting tones; controlled local clipping and near-black regions are acceptable when important structure survives. A high-key, hazy, muted, or low-contrast blockbuster is valid only when its large-scale hierarchy, depth, focal separation, and emotional scale are still unmistakably authored. “Preserving the mood” must never justify a merely safer grade.
+Build tonal architecture before polishing color. Preserve the scene's evidence, then amplify its strongest supported light, depth, and focal hierarchy decisively. Controlled localized clipping and near-black supporting tones are acceptable when important structure survives. Any bold treatment—high-key, low-key, muted, hazy, or high-contrast—must retain authored hierarchy, depth, and focal separation; “preserving the mood” must not justify a merely safer grade.
 
 Keep every direction achievable from existing pixels and never impose a genre preset or contradictory light. Define observable success criteria for each direction. A bold concept must visibly transform the scene's hierarchy without depending only on a global hue wash, uniform darkening, added saturation, or a generic vignette.
 
@@ -93,7 +92,7 @@ Name each file `<original-stem>_<style-id><intensity>_<direction-description><ex
 
 Each successful `grade` call reopens the encoded output, checks dimensions and alpha, and returns `before` and `after` metrics. Use that report instead of rerunning `compare`; use `compare` only when the original grade report is unavailable.
 
-Visually inspect every encoded output with an original-detail viewer or representative 100% crops; a fit-to-window chat preview is insufficient for detail QA. Cover at least smooth gradients, the focal subject, fine texture, and the strongest edge. Judge metrics spatially and in context rather than accepting or rejecting a result from a global clipping ratio alone. Check:
+Visually inspect every encoded output with an original-detail viewer or representative 100% crops; a fit-to-window chat preview is insufficient for detail QA. Cover the focal region and strongest edge, plus smooth gradients and fine texture where present. Judge metrics spatially and in context rather than accepting or rejecting a result from a global clipping ratio alone. Check:
 
 - tonal hierarchy, important highlight and shadow structure, white balance, skin and credible neutrals;
 - banding, halos, color contamination, noise smearing, brittle texture, and oversharpening;
@@ -102,7 +101,7 @@ Visually inspect every encoded output with an original-detail viewer or represen
 - saturated colors and highlights for hue breaks or gamut-edge contours when perceptual rendering or gamut compression is active; use the pre-map excursion and visible mapping effect to judge severity because a final zero out-of-gamut ratio alone proves only that mapping completed;
 - actual IHDR bit depth and an independent decoder for 16-bit PNG, or gradients at 100% for both banding and structured texture when dithering is active.
 
-Inspect all variants together. Redesign any pair separated only by cosmetic changes. A natural result may remain restrained, but a creative or bold result fails if it reads as merely corrected, uniformly darker or cooler, palette-shifted, or dependent on side-by-side comparison to reveal its intent. Confirm that the bold result amplifies a scene-specific light, depth, scale, motion, or subject relationship and that its hierarchy remains strong in grayscale.
+Inspect all variants together. Redesign any pair separated only by cosmetic changes. A natural result may remain restrained, but a creative or bold result fails if it reads as merely corrected, uniformly darker or cooler, palette-shifted, or dependent on side-by-side comparison to reveal its intent. Confirm that each bold result amplifies a scene-specific light, depth, scale, motion, or subject relationship and that its hierarchy remains strong in grayscale.
 
 If a bold result misses its thesis, strengthen the responsible large-scale tone and local-light stages before adding more saturation or texture. If it introduces damage, reduce only the responsible controls. Rerender from the original without asking for confirmation.
 
