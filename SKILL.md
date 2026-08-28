@@ -41,10 +41,10 @@ Use the bundled Python pipeline to inspect, design, render, verify, and deliver 
 Inspect the photograph visually, then run:
 
 ```bash
-python3 <skill-dir>/scripts/photo_grade.py analyze <input> --pretty
+python3 <skill-dir>/scripts/photo_grade.py analyze <input> --report agent
 ```
 
-Assess exposure, clipping, usable dynamic range, white balance, saturation, noise, softness, and composition. Use `rgb_channels`, `spatial_luma_grid_3x3`, `spatial_rgb_mean_grid_3x3`, and histograms as evidence, not as automatic correction targets. Confirm every interpretation visually.
+Assess exposure, clipping, usable dynamic range, white balance, saturation, noise, softness, and composition. Use `rgb_channels`, percentiles, `spatial_luma_grid_3x3`, and `spatial_rgb_mean_grid_3x3` as evidence, not as automatic correction targets. Confirm every interpretation visually. The default report contains the evidence required for routine assessment. Request `--report full` whenever histogram shape may help resolve uncertainty, diagnose artifacts, or validate unusual tonal or channel distributions.
 
 - Do not infer illumination direction from a bright-to-dark gradient alone; subject reflectance, clothing, sky, and background can create the same pattern. Prefer consistent cues such as cast shadows, specular highlights, shading across one surface, window or sun position, and facial modeling. If direction remains ambiguous, use broad tonal zoning instead of directional relighting.
 - Do not neutralize an intentional warm, cool, or colorful scene from global RGB averages. Base white-balance correction on credible neutral surfaces or repeated spatial evidence when available. Use skin only as a plausibility constraint, never as a neutral reference.
@@ -67,20 +67,22 @@ Build tonal architecture before polishing color. Preserve the scene's evidence, 
 
 Keep every direction achievable from existing pixels and never impose a genre preset or contradictory light. Define observable success criteria for each direction. A bold concept must visibly transform the scene's hierarchy without depending only on a global hue wash, uniform darkening, added saturation, or a generic vignette.
 
-### 3. Commit one recipe per output
+### 3. Commit all selected recipes in one manifest
 
-After inspection, write one internal `schema_version: 1` recipe for each output before invoking `grade`. Include every required structural field but only active parameter values; the script supplies neutral defaults and rejects unknown fields. Make every active control serve the visual intent. Retain the original path, final recipe, report, output settings, and pipeline version through the active conversation so follow-up refinements remain reproducible. Do not expose recipes for confirmation.
+After inspection, write one internal `schema_version: 1` batch manifest containing one recipe and final output path per selected result. Include every required recipe structural field but only active parameter values; the script supplies neutral defaults and rejects unknown fields. Make every active control serve the visual intent. Relative output paths resolve from the manifest's directory. Retain the original path, manifest, final recipes, report, output settings, and pipeline version through the active conversation so follow-up refinements remain reproducible. Do not expose recipes for confirmation.
 
 ### 4. Render every selected final
 
-Render each recipe from the original:
+Render the complete set with one command:
 
 ```bash
-python3 <skill-dir>/scripts/photo_grade.py grade <input> <output> \
-  --recipe <internal-recipe.json>
+python3 <skill-dir>/scripts/photo_grade.py grade-batch <input> \
+  --manifest <internal-batch.json> --report agent
 ```
 
-Keep each complete JSON report attributable to its output. Parallel rendering is allowed only when reports cannot become mixed.
+The batch command validates the entire manifest before rendering, applies every recipe independently from the original, reopens every encoded output, and keeps each report attributable to its output. It renders to sibling temporary files and publishes the final paths only after the complete set passes; a failure preserves pre-existing finals and removes temporary renders. Its default report retains the clipping, percentile, spatial, encoding, and processing evidence required for routine QA; `before_ref` identifies the applicable source metrics for each output. Request `--report full` whenever complete 64-bin histograms or extended diagnostics could improve the quality judgment.
+
+When exactly one output is needed, `grade ... --recipe ... --report agent` remains valid. Do not split a multi-output set into separate `grade` calls.
 
 Name each file `<original-stem>_<style-id><intensity>_<direction-description><extension>`, for example `IMG_1234_A3_自然通透.jpg`.
 
@@ -90,7 +92,7 @@ Name each file `<original-stem>_<style-id><intensity>_<direction-description><ex
 
 ### 5. Verify and iterate
 
-Each successful `grade` call reopens the encoded output, checks dimensions and alpha, and returns `before` and `after` metrics. Use that report instead of rerunning `compare`; use `compare` only when the original grade report is unavailable.
+Each successful `grade` or `grade-batch` item reopens the encoded output, checks dimensions and alpha, and returns the relevant `before` and `after` metrics. Use that report instead of rerunning `compare`; use `compare` only when the original grade report is unavailable.
 
 Visually inspect every encoded output with an original-detail viewer or representative 100% crops; a fit-to-window chat preview is insufficient for detail QA. Cover the focal region and strongest edge, plus smooth gradients and fine texture where present. Judge metrics spatially and in context rather than accepting or rejecting a result from a global clipping ratio alone. Check:
 

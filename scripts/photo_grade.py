@@ -11,6 +11,7 @@ import math
 import platform
 import re
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -272,9 +273,7 @@ def validate_local_adjustments(value: Any, label: str) -> list[dict[str, Any]]:
     return validated
 
 
-def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
-    with path.resolve().open("r", encoding="utf-8") as handle:
-        payload = json.load(handle)
+def parse_recipe(payload: Any) -> tuple[argparse.Namespace, dict[str, Any]]:
     recipe = require_object(payload, "recipe")
     require_exact_keys(
         recipe,
@@ -513,6 +512,11 @@ def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
         },
     }
     return argparse.Namespace(**normalized), expanded_recipe
+
+
+def load_recipe(path: Path) -> tuple[argparse.Namespace, dict[str, Any]]:
+    with path.resolve().open("r", encoding="utf-8") as handle:
+        return parse_recipe(json.load(handle))
 
 
 def require_supported(path: Path) -> None:
@@ -1962,9 +1966,11 @@ def save_image(
         )
 
 
-def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: dict[str, Any]) -> dict[str, Any]:
-    source = Path(args.input).resolve()
-    output = Path(args.output).resolve()
+def validate_grade_request(
+    source: Path,
+    output: Path,
+    settings: argparse.Namespace,
+) -> tuple[str, bool]:
     require_supported(source)
     require_supported(output)
     requested_output_format = format_for_extension(output)
@@ -1977,6 +1983,13 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
         raise ValueError("16-bit output is supported only for PNG.")
     if settings.png_dither == "tpdf" and (not output_is_png or settings.png_bit_depth != 8):
         raise ValueError("TPDF dithering requires 8-bit PNG output.")
+    return requested_output_format, output_is_png
+
+
+def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: dict[str, Any]) -> dict[str, Any]:
+    source = Path(args.input).resolve()
+    output = Path(args.output).resolve()
+    requested_output_format, output_is_png = validate_grade_request(source, output, settings)
     strict_color = (
         settings.rendering != "legacy"
         or settings.gamut_mapping != "clip"
@@ -2132,6 +2145,234 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
     return result
 
 
+def metrics_for_agent(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Return the metric set used for routine agent quality assessment."""
+    result = dict(metrics)
+    result["rgb_channels"] = {
+        channel: {
+            key: value
+            for key, value in channel_metrics.items()
+            if key != "histogram_64"
+        }
+        for channel, channel_metrics in metrics["rgb_channels"].items()
+    }
+    return result
+
+
+def report_for_agent(report: dict[str, Any]) -> dict[str, Any]:
+    result = dict(report)
+    result["report_mode"] = "agent"
+    if "metrics" in result:
+        result["metrics"] = metrics_for_agent(result["metrics"])
+    if "before" in result:
+        result["before"] = metrics_for_agent(result["before"])
+    if "after" in result:
+        result["after"] = metrics_for_agent(result["after"])
+    for name in ("original", "graded"):
+        if name in result:
+            nested = dict(result[name])
+            nested["metrics"] = metrics_for_agent(nested["metrics"])
+            result[name] = nested
+    return result
+
+
+def load_batch_manifest(
+    path: Path,
+    source: Path,
+) -> list[tuple[Path, argparse.Namespace, dict[str, Any]]]:
+    manifest_path = path.resolve()
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    manifest = require_object(payload, "manifest")
+    require_exact_keys(manifest, {"schema_version", "outputs"}, "manifest")
+    if isinstance(manifest["schema_version"], bool) or manifest["schema_version"] != 1:
+        raise ValueError("manifest.schema_version must be 1.")
+    outputs = manifest["outputs"]
+    if not isinstance(outputs, list) or not 1 <= len(outputs) <= 26:
+        raise ValueError("manifest.outputs must contain between 1 and 26 items.")
+
+    entries: list[tuple[Path, argparse.Namespace, dict[str, Any]]] = []
+    seen_outputs: set[str] = set()
+    for index, raw_item in enumerate(outputs):
+        label = f"manifest.outputs[{index}]"
+        item = require_object(raw_item, label)
+        require_exact_keys(item, {"output", "recipe"}, label)
+        raw_output = item["output"]
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise ValueError(f"{label}.output must be a non-empty path string.")
+        output = Path(raw_output)
+        if not output.is_absolute():
+            output = manifest_path.parent / output
+        output = output.resolve()
+        output_key = str(output).casefold()
+        if output_key in seen_outputs:
+            raise ValueError(f"{label}.output duplicates another batch output path.")
+        seen_outputs.add(output_key)
+        settings, recipe = parse_recipe(item["recipe"])
+        validate_grade_request(source, output, settings)
+        entries.append((output, settings, recipe))
+    return entries
+
+
+def batch_report_for_agent(input_path: Path, reports: list[dict[str, Any]]) -> dict[str, Any]:
+    first = reports[0]
+    source = {
+        "input": str(input_path),
+        "source_extension": first["source_extension"],
+        "detected_format": first["detected_format"],
+        "extension_matches_format": first["extension_matches_format"],
+        "recommended_extension": first["recommended_extension"],
+        "width": first["width"],
+        "height": first["height"],
+    }
+    before_metrics: dict[str, dict[str, Any]] = {}
+    before_references: dict[str, str] = {}
+    outputs: list[dict[str, Any]] = []
+    shared_fields = {
+        "input",
+        "source_extension",
+        "detected_format",
+        "extension_matches_format",
+        "recommended_extension",
+        "width",
+        "height",
+        "before",
+    }
+    for report in reports:
+        before = metrics_for_agent(report["before"])
+        signature = json.dumps(before, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        before_ref = before_references.get(signature)
+        if before_ref is None:
+            before_ref = f"before-{len(before_metrics) + 1}"
+            before_references[signature] = before_ref
+            before_metrics[before_ref] = before
+        output_report = {
+            key: value
+            for key, value in report.items()
+            if key not in shared_fields and key != "after"
+        }
+        output_report["before_ref"] = before_ref
+        output_report["after"] = metrics_for_agent(report["after"])
+        outputs.append(output_report)
+    return {
+        "schema_version": 1,
+        "command": "grade-batch",
+        "report_mode": "agent",
+        "source": source,
+        "before_metrics": before_metrics,
+        "outputs": outputs,
+        "summary": {"requested": len(outputs), "succeeded": len(outputs)},
+    }
+
+
+def create_sibling_temp_path(output: Path, purpose: str) -> Path:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{output.stem}.{purpose}-",
+        suffix=output.suffix,
+        dir=output.parent,
+        delete=False,
+    ) as handle:
+        return Path(handle.name)
+
+
+def publish_batch_outputs(rendered: list[tuple[Path, Path]]) -> None:
+    backups: dict[Path, Path | None] = {}
+    published: list[Path] = []
+    try:
+        for final, _ in rendered:
+            if not final.exists():
+                backups[final] = None
+                continue
+            backup = create_sibling_temp_path(final, "batch-backup")
+            try:
+                final.replace(backup)
+            except Exception:
+                backup.unlink(missing_ok=True)
+                raise
+            backups[final] = backup
+
+        for final, temporary in rendered:
+            temporary.replace(final)
+            published.append(final)
+    except Exception as publish_error:
+        rollback_errors: list[str] = []
+        for final in reversed(published):
+            try:
+                final.unlink(missing_ok=True)
+            except Exception as exc:
+                rollback_errors.append(f"remove {final}: {exc}")
+        for final, backup in reversed(list(backups.items())):
+            if backup is None or not backup.exists():
+                continue
+            try:
+                backup.replace(final)
+            except Exception as exc:
+                rollback_errors.append(f"restore {final} from {backup}: {exc}")
+        if rollback_errors:
+            details = "; ".join(rollback_errors)
+            raise RuntimeError(
+                f"Batch publish failed and rollback was incomplete: {details}"
+            ) from publish_error
+        raise
+    else:
+        for backup in backups.values():
+            if backup is not None:
+                try:
+                    backup.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+
+def run_grade_batch(args: argparse.Namespace) -> dict[str, Any]:
+    source = Path(args.input).resolve()
+    require_supported(source)
+    entries = load_batch_manifest(Path(args.manifest), source)
+    prepared: list[tuple[Path, Path, argparse.Namespace, dict[str, Any]]] = []
+    reports: list[dict[str, Any]] = []
+    try:
+        for output, settings, recipe in entries:
+            temporary = create_sibling_temp_path(output, "batch-render")
+            prepared.append((output, temporary, settings, recipe))
+        for output, temporary, settings, recipe in prepared:
+            item_args = argparse.Namespace(
+                input=str(source),
+                output=str(temporary),
+                show_parameters=args.show_parameters,
+            )
+            report = run_grade(item_args, settings, recipe)
+            report["output"] = str(output)
+            reports.append(report)
+        if args.report == "agent":
+            result = batch_report_for_agent(source, reports)
+        else:
+            result = {
+                "schema_version": 1,
+                "command": "grade-batch",
+                "report_mode": "full",
+                "input": str(source),
+                "reports": reports,
+                "summary": {"requested": len(reports), "succeeded": len(reports)},
+            }
+        publish_batch_outputs(
+            [(output, temporary) for output, temporary, _, _ in prepared]
+        )
+    except Exception as batch_error:
+        cleanup_errors: list[str] = []
+        for _, temporary, _, _ in prepared:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as exc:
+                cleanup_errors.append(f"remove {temporary}: {exc}")
+        if cleanup_errors:
+            details = "; ".join(cleanup_errors)
+            raise RuntimeError(
+                f"Batch rendering failed and temporary cleanup was incomplete: {details}"
+            ) from batch_error
+        raise
+    return result
+
+
 def compare_images(original: Path, graded: Path) -> dict[str, Any]:
     first = analyze(original)
     second = analyze(graded)
@@ -2186,6 +2427,15 @@ def compare_images(original: Path, graded: Path) -> dict[str, Any]:
     }
 
 
+def add_report_argument(parser: argparse.ArgumentParser, default: str = "agent") -> None:
+    parser.add_argument(
+        "--report",
+        choices=("agent", "full"),
+        default=default,
+        help="agent includes routine QA metrics; full additionally includes 64-bin histograms",
+    )
+
+
 def add_grade_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("input")
     parser.add_argument("output")
@@ -2199,6 +2449,7 @@ def add_grade_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Include final recipe parameters in the report only when explicitly requested",
     )
+    add_report_argument(parser)
     parser.add_argument("--pretty", action="store_true")
 
 
@@ -2207,12 +2458,27 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     analyze_parser = sub.add_parser("analyze", help="Print deterministic image metrics")
     analyze_parser.add_argument("input")
+    add_report_argument(analyze_parser)
     analyze_parser.add_argument("--pretty", action="store_true")
     grade_parser = sub.add_parser("grade", help="Apply one non-generative color grade")
     add_grade_arguments(grade_parser)
+    batch_parser = sub.add_parser(
+        "grade-batch",
+        help="Apply multiple independent grades from one manifest",
+    )
+    batch_parser.add_argument("input")
+    batch_parser.add_argument("--manifest", required=True)
+    batch_parser.add_argument(
+        "--show-parameters",
+        action="store_true",
+        help="Include final recipe parameters in each output report only when explicitly requested",
+    )
+    add_report_argument(batch_parser, default="agent")
+    batch_parser.add_argument("--pretty", action="store_true")
     compare_parser = sub.add_parser("compare", help="Compare source and output metrics/geometry")
     compare_parser.add_argument("original")
     compare_parser.add_argument("graded")
+    add_report_argument(compare_parser)
     compare_parser.add_argument("--pretty", action="store_true")
     return parser
 
@@ -2223,11 +2489,19 @@ def main() -> int:
     try:
         if args.command == "analyze":
             report = analyze(Path(args.input).resolve())
+            if args.report == "agent":
+                report = report_for_agent(report)
         elif args.command == "grade":
             settings, recipe = load_recipe(Path(args.recipe))
             report = run_grade(args, settings, recipe)
+            if args.report == "agent":
+                report = report_for_agent(report)
+        elif args.command == "grade-batch":
+            report = run_grade_batch(args)
         else:
             report = compare_images(Path(args.original).resolve(), Path(args.graded).resolve())
+            if args.report == "agent":
+                report = report_for_agent(report)
         print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
         return 0
     except Exception as exc:

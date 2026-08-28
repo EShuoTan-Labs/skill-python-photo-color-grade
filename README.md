@@ -71,20 +71,29 @@ python3 -m pip install -r requirements.txt
 分析照片：
 
 ```bash
-python3 scripts/photo_grade.py analyze input.jpg --pretty
+python3 scripts/photo_grade.py analyze input.jpg --report agent
 ```
 
-执行调色：
+一次执行多套调色：
+
+```bash
+python3 scripts/photo_grade.py grade-batch input.jpg \
+  --manifest batch.json --report agent
+```
+
+`batch.json` 将所有输出路径和完整配方放在一个 `outputs` 数组中。脚本会先验证整份清单，再从原图独立渲染每个版本并逐张回读验证。所有版本通过后才会发布最终路径；任一版本失败都会清理临时渲染并保留已有成片。默认报告包含常规调色判断与成片验收所需的指标；当直方图有助于消除判断不确定性、诊断伪影或验证异常明暗与通道分布时，使用 `--report full`。
+
+只执行一套调色：
 
 ```bash
 python3 scripts/photo_grade.py grade input.jpg output_graded.jpg \
-  --recipe recipe.json
+  --recipe recipe.json --report agent
 ```
 
 比较原图与成片：
 
 ```bash
-python3 scripts/photo_grade.py compare input.jpg output_graded.jpg --pretty
+python3 scripts/photo_grade.py compare input.jpg output_graded.jpg --report agent
 ```
 
 完整能力与配方说明见 [`references/capabilities-and-recipes.md`](references/capabilities-and-recipes.md)；算法、编码和报告实现细节见 [`references/technical-behavior.md`](references/technical-behavior.md)。

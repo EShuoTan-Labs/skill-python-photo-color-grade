@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from test_legacy_regression import ROOT, SCRIPT, recipe
+from test_legacy_regression import ROOT, SCRIPT, load_module, recipe
 
 
 def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -118,6 +118,229 @@ def test_analyze_grade_compare_json_extensions(tmp_path: Path, suffix: str) -> N
     assert grade_report["parameters"]["channel_curves"]["red"]
     assert set(compare_report["rgb_channel_difference"]) == {"red", "green", "blue"}
     assert compare_report["checks"]["passed"] is True
+
+
+def test_agent_reports_omit_histograms_without_dropping_decision_metrics(tmp_path: Path) -> None:
+    source, output, recipe_path = write_inputs(tmp_path, ".png")
+
+    full = run_cli("analyze", str(source), "--report", "full")
+    analyzed = run_cli("analyze", str(source))
+    graded = run_cli(
+        "grade",
+        str(source),
+        str(output),
+        "--recipe",
+        str(recipe_path),
+    )
+    compared = run_cli("compare", str(source), str(output))
+    full_compare = run_cli("compare", str(source), str(output), "--report", "full")
+
+    assert (
+        full.returncode
+        == analyzed.returncode
+        == graded.returncode
+        == compared.returncode
+        == full_compare.returncode
+        == 0
+    )
+    full_report = json.loads(full.stdout)
+    analyze_report = json.loads(analyzed.stdout)
+    grade_report = json.loads(graded.stdout)
+    compare_report = json.loads(compared.stdout)
+    full_compare_report = json.loads(full_compare.stdout)
+    assert all(
+        "histogram_64" in channel
+        for channel in full_report["metrics"]["rgb_channels"].values()
+    )
+    assert (
+        analyze_report["report_mode"]
+        == grade_report["report_mode"]
+        == compare_report["report_mode"]
+        == "agent"
+    )
+    for metrics in (analyze_report["metrics"], grade_report["before"], grade_report["after"]):
+        assert "luma_percentiles" in metrics
+        assert "spatial_luma_grid_3x3" in metrics
+        assert "spatial_rgb_mean_grid_3x3" in metrics
+        assert all(
+            "histogram_64" not in channel
+            for channel in metrics["rgb_channels"].values()
+        )
+    for name in ("original", "graded"):
+        assert all(
+            "histogram_64" not in channel
+            for channel in compare_report[name]["metrics"]["rgb_channels"].values()
+        )
+        assert all(
+            "histogram_64" in channel
+            for channel in full_compare_report[name]["metrics"]["rgb_channels"].values()
+        )
+
+
+def test_grade_batch_renders_independently_and_deduplicates_agent_before_metrics(
+    tmp_path: Path,
+) -> None:
+    source, _, _ = write_inputs(tmp_path, ".png")
+    manifest_path = tmp_path / "batch.json"
+    first_recipe = recipe({"basic": {"exposure": 0.1, "highlights": -0.08}})
+    second_recipe = recipe(
+        {
+            "basic": {"exposure": -0.15, "contrast": 0.18},
+            "color_grading": {"shadows": {"hue": 220, "saturation": 0.08}},
+        }
+    )
+    second_recipe["style"] = {"id": "B", "name": "cool depth", "intensity": 3}
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "outputs": [
+                    {"output": "batch-a.png", "recipe": first_recipe},
+                    {"output": "batch-b.png", "recipe": second_recipe},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    batch_a = tmp_path / "batch-a.png"
+    batch_a.write_bytes(b"existing-output-must-not-leak")
+
+    completed = run_cli("grade-batch", str(source), "--manifest", str(manifest_path))
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["command"] == "grade-batch"
+    assert report["report_mode"] == "agent"
+    assert report["summary"] == {"requested": 2, "succeeded": 2}
+    assert len(report["before_metrics"]) == 1
+    assert [item["style"]["id"] for item in report["outputs"]] == ["A", "B"]
+    assert [Path(item["output"]).name for item in report["outputs"]] == [
+        "batch-a.png",
+        "batch-b.png",
+    ]
+    assert "batch-render" not in completed.stdout
+    assert len({item["before_ref"] for item in report["outputs"]}) == 1
+    assert all(
+        "histogram_64" not in channel
+        for item in report["outputs"]
+        for channel in item["after"]["rgb_channels"].values()
+    )
+    batch_b = tmp_path / "batch-b.png"
+    assert batch_a.is_file() and batch_b.is_file()
+    assert not list(tmp_path.glob(".*.batch-render-*"))
+    assert not list(tmp_path.glob(".*.batch-backup-*"))
+
+    single_output = tmp_path / "single-a.png"
+    single_recipe = tmp_path / "single-a.json"
+    single_recipe.write_text(json.dumps(first_recipe), encoding="utf-8")
+    single = run_cli(
+        "grade",
+        str(source),
+        str(single_output),
+        "--recipe",
+        str(single_recipe),
+    )
+    assert single.returncode == 0, single.stderr
+    assert batch_a.read_bytes() == single_output.read_bytes()
+
+
+def test_grade_batch_validates_every_item_before_rendering(tmp_path: Path) -> None:
+    source, _, _ = write_inputs(tmp_path, ".png")
+    manifest_path = tmp_path / "invalid-batch.json"
+    first_output = tmp_path / "must-not-exist.png"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "outputs": [
+                    {"output": str(first_output), "recipe": recipe({})},
+                    {"output": str(source), "recipe": recipe({})},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = run_cli("grade-batch", str(source), "--manifest", str(manifest_path))
+
+    assert completed.returncode == 2
+    assert "Refusing to overwrite the original image" in completed.stderr
+    assert not first_output.exists()
+
+
+def test_grade_batch_runtime_failure_preserves_existing_outputs_and_cleans_temps(
+    tmp_path: Path,
+) -> None:
+    source, _, _ = write_inputs(tmp_path, ".png")
+    first_output = tmp_path / "existing.png"
+    second_output = tmp_path / "requires-pypng.png"
+    original_bytes = b"existing-output-must-survive"
+    first_output.write_bytes(original_bytes)
+    manifest_path = tmp_path / "runtime-failure.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "outputs": [
+                    {"output": str(first_output), "recipe": recipe({})},
+                    {
+                        "output": str(second_output),
+                        "recipe": recipe({"output": {"png_bit_depth": 16}}),
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = run_cli_without_pypng(
+        "grade-batch",
+        str(source),
+        "--manifest",
+        str(manifest_path),
+    )
+
+    assert completed.returncode == 2
+    assert first_output.read_bytes() == original_bytes
+    assert not second_output.exists()
+    assert not list(tmp_path.glob(".*.batch-render-*"))
+    assert not list(tmp_path.glob(".*.batch-backup-*"))
+
+
+def test_batch_publish_rolls_back_existing_outputs_when_a_later_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    photo_grade = load_module()
+    first_final = tmp_path / "first.png"
+    second_final = tmp_path / "second.png"
+    first_temporary = tmp_path / ".first.batch-render.png"
+    second_temporary = tmp_path / ".second.batch-render.png"
+    first_final.write_bytes(b"old-first")
+    second_final.write_bytes(b"old-second")
+    first_temporary.write_bytes(b"new-first")
+    second_temporary.write_bytes(b"new-second")
+    original_replace = Path.replace
+
+    def fail_second_publish(self: Path, target: Path) -> Path:
+        if self == second_temporary and Path(target) == second_final:
+            raise OSError("simulated publish failure")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_second_publish)
+
+    with pytest.raises(OSError, match="simulated publish failure"):
+        photo_grade.publish_batch_outputs(
+            [
+                (first_final, first_temporary),
+                (second_final, second_temporary),
+            ]
+        )
+
+    assert first_final.read_bytes() == b"old-first"
+    assert second_final.read_bytes() == b"old-second"
+    assert second_temporary.read_bytes() == b"new-second"
+    assert not list(tmp_path.glob(".*.batch-backup-*"))
 
 
 def test_non_16bit_cli_commands_work_without_pypng(tmp_path: Path) -> None:
@@ -466,7 +689,16 @@ def test_invalid_composite_tree_exits_two_before_writing_output(tmp_path: Path, 
     assert not output.exists()
 
 
-@pytest.mark.parametrize("command", [(), ("analyze", "--help"), ("grade", "--help"), ("compare", "--help")])
+@pytest.mark.parametrize(
+    "command",
+    [
+        (),
+        ("analyze", "--help"),
+        ("grade", "--help"),
+        ("grade-batch", "--help"),
+        ("compare", "--help"),
+    ],
+)
 def test_existing_help_commands_remain_available(command: tuple[str, ...]) -> None:
     completed = run_cli(*command, "--help") if not command else run_cli(*command)
     assert completed.returncode == 0

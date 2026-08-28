@@ -320,4 +320,19 @@ def test_visual_regression_runner_generates_all_stage_reports(tmp_path: Path) ->
     assert [stage["stage"] for stage in stages] == [name for name, _ in visual_regression.STAGES]
     assert all(stage["compare"]["checks"]["passed"] for stage in stages)
     assert all((output_dir / stage["output"]).is_file() for stage in stages)
+    assert all(
+        "histogram_64" in channel
+        for channel in report["images"][0]["analyze"]["metrics"]["rgb_channels"].values()
+    )
+    assert all(
+        "histogram_64" in channel
+        for stage in stages
+        for metrics in (
+            stage["grade"]["before"],
+            stage["grade"]["after"],
+            stage["compare"]["original"]["metrics"],
+            stage["compare"]["graded"]["metrics"],
+        )
+        for channel in metrics["rgb_channels"].values()
+    )
     assert_json_finite(report)

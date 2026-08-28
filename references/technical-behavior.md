@@ -38,6 +38,10 @@ For 8-bit PNG, `png_dither: "tpdf"` adds deterministic coordinate-hashed, zero-m
 
 ## Analysis and reports
 
+`analyze`, `grade`, `grade-batch`, and `compare` default to the agent report. It contains the percentiles, clipping ratios, channel means, spatial grids, encoding checks, comparison checks, and processing diagnostics required for routine QA. `--report full` additionally includes the three 64-bin RGB histograms in every metric object; select it whenever histogram shape can resolve uncertainty, diagnose artifacts, or validate unusual tonal or channel distributions. `--pretty` changes formatting only.
+
+`grade-batch` accepts one validated manifest and defaults to the agent report. Every item still runs independently from the original and reopens its encoded output through the same `grade` path. Each render uses a temporary file beside its requested final path so verification and publication stay on the same filesystem. Finals are published only after the complete set succeeds; publication backs up existing finals and rolls them back if a later replacement fails. Rendering failures remove temporary files without changing pre-existing finals. `before_metrics` contains the source metric objects used by the batch, and each output's `before_ref` identifies which object applies; different strict or high-bit-depth decode results receive distinct references. `--report full` returns the complete report for every item.
+
 `analyze.metrics`, plus the `before` and `after` metric objects returned by `grade`, retain all legacy fields and add:
 
 - `rgb_channels.red|green|blue.mean`: visible-pixel channel mean.

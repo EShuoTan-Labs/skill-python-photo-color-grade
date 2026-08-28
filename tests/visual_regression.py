@@ -267,7 +267,9 @@ def run_visual_regression(input_dir: Path, output_dir: Path) -> dict[str, Any]:
             "stages": [],
         }
         try:
-            image_entry["analyze"] = run_json_command(["analyze", str(source)])
+            image_entry["analyze"] = run_json_command(
+                ["analyze", str(source), "--report", "full"]
+            )
         except Exception as exc:
             image_entry["error"] = str(exc)
             manifest["images"].append(image_entry)
@@ -292,10 +294,12 @@ def run_visual_regression(input_dir: Path, output_dir: Path) -> dict[str, Any]:
                         str(output),
                         "--recipe",
                         str(recipe_path),
+                        "--report",
+                        "full",
                     ]
                 )
                 stage_entry["compare"] = run_json_command(
-                    ["compare", str(source), str(output)]
+                    ["compare", str(source), str(output), "--report", "full"]
                 )
                 stage_entry["output_sha256"] = sha256(output)
                 stage_entry["status"] = "passed"

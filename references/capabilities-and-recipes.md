@@ -77,6 +77,37 @@ Do not optimize for zero clipping. Controlled localized specular clipping, near-
 
 ## Recipe contract
 
+### Batch manifest
+
+For a multi-output render, place every complete recipe in one manifest and call `grade-batch` once:
+
+```json
+{
+  "schema_version": 1,
+  "outputs": [
+    {
+      "output": "IMG_1234_A3_自然通透.jpg",
+      "recipe": {
+        "schema_version": 1,
+        "style": {"id": "A", "name": "自然通透", "intensity": 3},
+        "visual_intent": {
+          "brightness_key": "明亮但保留高光层次",
+          "contrast_structure": "稳定黑位与柔和中间调",
+          "light_geometry": "顺应原图既有光向",
+          "palette": "中性主色与克制暖色",
+          "subject_separation": "用明度分离主体",
+          "texture": "自然清晰"
+        },
+        "success_criteria": ["主体分离自然", "重要高光有纹理", "中性色无明显偏色"],
+        "parameters": {"basic": {"exposure": 0.15}}
+      }
+    }
+  ]
+}
+```
+
+The manifest accepts exactly `schema_version` and `outputs`; version `1` requires `1–26` items. Every item accepts exactly a non-empty `output` path and one complete recipe following the contract below. Relative output paths resolve from the manifest directory. Output paths must be unique and must not resolve to the source. The CLI validates every manifest item before rendering begins, renders each result to a same-directory temporary path, and publishes final paths only after every encoded result passes verification. A failure removes temporary renders and preserves any pre-existing finals.
+
 ### Illustrative full recipe
 
 The following recipe demonstrates the complete structure and how several control families can work together. It is not a default recipe or a checklist. Copy the required structural fields, but include a parameter section only when the photograph and visual intent justify it.
