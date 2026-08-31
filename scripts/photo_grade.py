@@ -757,6 +757,74 @@ def rgb_hsv_components(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndar
     return hue, sat, mx
 
 
+def circular_hue_summary(
+    hue: np.ndarray,
+    chroma: np.ndarray,
+    minimum_chroma: float = 0.02,
+) -> dict[str, Any]:
+    """Return a chroma-weighted OKLCh hue summary without averaging angles linearly."""
+    valid = np.isfinite(hue) & np.isfinite(chroma) & (chroma >= minimum_chroma)
+    if not np.any(valid):
+        return {
+            "dominant_hue_degrees": None,
+            "hue_concentration": 0.0,
+            "chromatic_ratio": 0.0,
+            "hue_histogram_12": [0.0] * 12,
+        }
+    selected_hue = hue[valid]
+    weights = chroma[valid]
+    angles = np.radians(selected_hue)
+    vector = np.sum(weights * np.exp(1j * angles))
+    total_weight = float(np.sum(weights))
+    dominant = float(np.degrees(np.angle(vector)) % 360.0)
+    concentration = float(abs(vector) / max(total_weight, 1e-12))
+    counts, _ = np.histogram(
+        selected_hue,
+        bins=np.linspace(0.0, 360.0, 13),
+        weights=weights,
+    )
+    histogram = counts.astype(np.float64) / max(float(np.sum(counts)), 1e-12)
+    return {
+        "dominant_hue_degrees": round(dominant, 3),
+        "hue_concentration": round(concentration, 6),
+        "chromatic_ratio": round(float(np.mean(valid)), 6),
+        "hue_histogram_12": np.round(histogram, 6).tolist(),
+    }
+
+
+def perceptual_palette_metrics(values: np.ndarray, luma: np.ndarray) -> dict[str, Any]:
+    """Describe palette topology globally and across rank-based tonal zones."""
+    oklch = oklab_to_oklch(srgb_to_oklab(values))
+    chroma = oklch[:, 1]
+    hue = oklch[:, 2]
+    p25, p75, p90 = np.percentile(luma, [25, 75, 90])
+    zones = {
+        "shadows_bottom_quartile": luma <= p25,
+        "midtones_interquartile": (luma > p25) & (luma < p75),
+        "highlights_top_decile": luma >= p90,
+    }
+    zone_reports: dict[str, Any] = {}
+    for name, mask in zones.items():
+        zone_values = values[mask]
+        zone_luma = luma[mask]
+        zone_oklch = oklch[mask]
+        hue_summary = circular_hue_summary(zone_oklch[:, 2], zone_oklch[:, 1])
+        zone_reports[name] = {
+            "pixel_ratio": round(float(np.mean(mask)), 6),
+            "luma_mean": round(float(np.mean(zone_luma)), 5),
+            "rgb_mean": [round(float(value), 5) for value in np.mean(zone_values, axis=0)],
+            "oklch_lightness_mean": round(float(np.mean(zone_oklch[:, 0])), 5),
+            "oklch_chroma_mean": round(float(np.mean(zone_oklch[:, 1])), 5),
+            **{key: value for key, value in hue_summary.items() if key != "hue_histogram_12"},
+        }
+    return {
+        "oklch_chroma_mean": round(float(np.mean(chroma)), 5),
+        "oklch_chroma_p95": round(float(np.percentile(chroma, 95)), 5),
+        **circular_hue_summary(hue, chroma),
+        "tonal_zones": zone_reports,
+    }
+
+
 def hsv_to_rgb(hue: np.ndarray, saturation: np.ndarray, value: np.ndarray) -> np.ndarray:
     h = (hue % 360.0) / 60.0
     sector = np.floor(h).astype(np.int16) % 6
@@ -946,6 +1014,7 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
     percentile_keys = [1, 5, 25, 50, 75, 95, 99]
     channel_percentiles = np.percentile(values, percentile_keys, axis=0)
     channel_mean = np.mean(values, axis=0)
+    perceptual_palette = perceptual_palette_metrics(values, luma)
     neutral = (saturation < 0.12) & (luma > 0.2) & (luma < 0.95)
     neutral_mean = np.mean(values[neutral], axis=0) if np.any(neutral) else np.array([np.nan] * 3)
     height, width = rgb.shape[:2]
@@ -1008,6 +1077,7 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
         "saturation_mean": round(float(np.mean(saturation)), 5),
         "saturation_p95": round(float(np.percentile(saturation, 95)), 5),
         "channel_mean_rgb": [round(float(v), 5) for v in channel_mean],
+        "perceptual_palette": perceptual_palette,
         "rgb_channels": rgb_channels,
         "neutral_candidate_ratio": round(float(np.mean(neutral)), 5),
         "neutral_candidate_mean_rgb": [None if np.isnan(v) else round(float(v), 5) for v in neutral_mean],
@@ -2043,6 +2113,7 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
         if meta["format"] == check_meta["format"]
         else {"from": meta["format"], "to": check_meta["format"]}
     )
+    after = image_metrics(check_rgb, check_alpha)
     result = {
         "input": str(source),
         "output": str(output),
@@ -2056,7 +2127,8 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
         "style": recipe["style"],
         "recipe_validated": True,
         "before": before,
-        "after": image_metrics(check_rgb, check_alpha),
+        "after": after,
+        "transformation_summary": transformation_summary(before, after),
         "processing": {
             "curve_working_space": "encoded_srgb_[0,1]",
             "curve_interpolation": "piecewise_linear",
@@ -2410,6 +2482,9 @@ def compare_images(original: Path, graded: Path) -> dict[str, Any]:
     return {
         "original": first,
         "graded": second,
+        "transformation_summary": transformation_summary(
+            first["metrics"], second["metrics"]
+        ),
         "rgb_channel_difference": channel_difference,
         "output_encoding_difference": {
             "original_bit_depth": first["bit_depth"],
@@ -2427,12 +2502,159 @@ def compare_images(original: Path, graded: Path) -> dict[str, Any]:
     }
 
 
+def transformation_summary(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """Summarize perceptually useful source-to-render changes without scoring aesthetics."""
+    luma_deltas = {
+        "mean": float(after["luma_mean"]) - float(before["luma_mean"]),
+        **{
+            f"p{percentile}": (
+                float(after["luma_percentiles"][percentile])
+                - float(before["luma_percentiles"][percentile])
+            )
+            for percentile in ("5", "50", "95", "99")
+        },
+    }
+    rgb_deltas = {
+        channel: (
+            float(after["rgb_channels"][channel]["mean"])
+            - float(before["rgb_channels"][channel]["mean"])
+        )
+        for channel in CHANNEL_NAMES
+    }
+    before_grid = np.asarray(before["spatial_luma_grid_3x3"], dtype=np.float64)
+    after_grid = np.asarray(after["spatial_luma_grid_3x3"], dtype=np.float64)
+    grid_delta = after_grid - before_grid
+    before_range = float(np.max(before_grid) - np.min(before_grid))
+    after_range = float(np.max(after_grid) - np.min(after_grid))
+    before_palette = before["perceptual_palette"]
+    after_palette = after["perceptual_palette"]
+
+    def percentile_gap(metrics: dict[str, Any], high: str, low: str) -> float:
+        return float(metrics["luma_percentiles"][high]) - float(
+            metrics["luma_percentiles"][low]
+        )
+
+    def hue_delta(first: float | None, second: float | None) -> float | None:
+        if first is None or second is None:
+            return None
+        return round(float((second - first + 180.0) % 360.0 - 180.0), 3)
+
+    zone_deltas: dict[str, Any] = {}
+    for zone_name, before_zone in before_palette["tonal_zones"].items():
+        after_zone = after_palette["tonal_zones"][zone_name]
+        zone_deltas[zone_name] = {
+            "luma_mean_delta": round(
+                float(after_zone["luma_mean"]) - float(before_zone["luma_mean"]), 6
+            ),
+            "oklch_chroma_mean_delta": round(
+                float(after_zone["oklch_chroma_mean"])
+                - float(before_zone["oklch_chroma_mean"]),
+                6,
+            ),
+            "dominant_hue_delta_degrees": hue_delta(
+                before_zone["dominant_hue_degrees"],
+                after_zone["dominant_hue_degrees"],
+            ),
+            "dominant_hue_before_degrees": before_zone[
+                "dominant_hue_degrees"
+            ],
+            "dominant_hue_after_degrees": after_zone[
+                "dominant_hue_degrees"
+            ],
+            "rgb_mean_delta": [
+                round(float(after_value) - float(before_value), 6)
+                for before_value, after_value in zip(
+                    before_zone["rgb_mean"], after_zone["rgb_mean"]
+                )
+            ],
+        }
+    neutral_delta = [
+        (
+            None
+            if before_value is None or after_value is None
+            else round(float(after_value) - float(before_value), 6)
+        )
+        for before_value, after_value in zip(
+            before["neutral_candidate_mean_rgb"], after["neutral_candidate_mean_rgb"]
+        )
+    ]
+    return {
+        "luma_delta": {name: round(value, 6) for name, value in luma_deltas.items()},
+        "tonal_separation_delta": {
+            "p99_minus_p50": round(
+                percentile_gap(after, "99", "50")
+                - percentile_gap(before, "99", "50"),
+                6,
+            ),
+            "p99_minus_p95": round(
+                percentile_gap(after, "99", "95")
+                - percentile_gap(before, "99", "95"),
+                6,
+            ),
+            "p95_minus_p50": round(
+                percentile_gap(after, "95", "50")
+                - percentile_gap(before, "95", "50"),
+                6,
+            ),
+            "p50_minus_p5": round(
+                percentile_gap(after, "50", "5")
+                - percentile_gap(before, "50", "5"),
+                6,
+            ),
+        },
+        "dynamic_range_p95_p05_delta": round(
+            float(after["dynamic_range_p95_p05"])
+            - float(before["dynamic_range_p95_p05"]),
+            6,
+        ),
+        "saturation_mean_delta": round(
+            float(after["saturation_mean"]) - float(before["saturation_mean"]),
+            6,
+        ),
+        "rgb_channel_mean_delta": {
+            name: round(value, 6) for name, value in rgb_deltas.items()
+        },
+        "perceptual_palette_delta": {
+            "oklch_chroma_mean_delta": round(
+                float(after_palette["oklch_chroma_mean"])
+                - float(before_palette["oklch_chroma_mean"]),
+                6,
+            ),
+            "dominant_hue_delta_degrees": hue_delta(
+                before_palette["dominant_hue_degrees"],
+                after_palette["dominant_hue_degrees"],
+            ),
+            "dominant_hue_before_degrees": before_palette[
+                "dominant_hue_degrees"
+            ],
+            "dominant_hue_after_degrees": after_palette[
+                "dominant_hue_degrees"
+            ],
+            "hue_concentration_delta": round(
+                float(after_palette["hue_concentration"])
+                - float(before_palette["hue_concentration"]),
+                6,
+            ),
+            "tonal_zones": zone_deltas,
+            "neutral_candidate_rgb_mean_delta": neutral_delta,
+        },
+        "spatial_luma": {
+            "cell_delta_3x3": np.round(grid_delta, 6).tolist(),
+            "mean_absolute_cell_delta": round(float(np.mean(np.abs(grid_delta))), 6),
+            "max_absolute_cell_delta": round(float(np.max(np.abs(grid_delta))), 6),
+            "cell_range_before": round(before_range, 6),
+            "cell_range_after": round(after_range, 6),
+            "cell_range_delta": round(after_range - before_range, 6),
+        },
+    }
+
+
 def add_report_argument(parser: argparse.ArgumentParser, default: str = "agent") -> None:
     parser.add_argument(
         "--report",
         choices=("agent", "full"),
         default=default,
-        help="agent includes routine QA metrics; full additionally includes 64-bin histograms",
+        help="agent includes routine diagnostics; full additionally includes complete metrics and histograms",
     )
 
 

@@ -116,6 +116,46 @@ def test_analyze_grade_compare_json_extensions(tmp_path: Path, suffix: str) -> N
         "active_channel_curves": ["red", "green", "blue"],
     }
     assert grade_report["parameters"]["channel_curves"]["red"]
+    assert grade_report["transformation_summary"] == compare_report["transformation_summary"]
+    assert set(grade_report["transformation_summary"]) == {
+        "luma_delta",
+        "tonal_separation_delta",
+        "dynamic_range_p95_p05_delta",
+        "saturation_mean_delta",
+        "rgb_channel_mean_delta",
+        "perceptual_palette_delta",
+        "spatial_luma",
+    }
+    assert set(grade_report["transformation_summary"]["luma_delta"]) == {
+        "mean",
+        "p5",
+        "p50",
+        "p95",
+        "p99",
+    }
+    assert set(grade_report["transformation_summary"]["tonal_separation_delta"]) == {
+        "p99_minus_p50",
+        "p99_minus_p95",
+        "p95_minus_p50",
+        "p50_minus_p5",
+    }
+    assert len(
+        grade_report["transformation_summary"]["spatial_luma"]["cell_delta_3x3"]
+    ) == 3
+    palette = analyze_report["metrics"]["perceptual_palette"]
+    assert len(palette["hue_histogram_12"]) == 12
+    assert set(palette["tonal_zones"]) == {
+        "shadows_bottom_quartile",
+        "midtones_interquartile",
+        "highlights_top_decile",
+    }
+    palette_delta = grade_report["transformation_summary"]["perceptual_palette_delta"]
+    assert palette_delta["dominant_hue_before_degrees"] == palette[
+        "dominant_hue_degrees"
+    ]
+    assert palette_delta["dominant_hue_after_degrees"] is not None
+    assert set(palette_delta["tonal_zones"]) == set(palette["tonal_zones"])
+    assert len(palette_delta["neutral_candidate_rgb_mean_delta"]) == 3
     assert set(compare_report["rgb_channel_difference"]) == {"red", "green", "blue"}
     assert compare_report["checks"]["passed"] is True
 
@@ -175,6 +215,8 @@ def test_agent_reports_omit_histograms_without_dropping_decision_metrics(tmp_pat
             "histogram_64" in channel
             for channel in full_compare_report[name]["metrics"]["rgb_channels"].values()
         )
+    assert grade_report["transformation_summary"] == compare_report["transformation_summary"]
+    assert full_compare_report["transformation_summary"] == compare_report["transformation_summary"]
 
 
 def test_grade_batch_renders_independently_and_deduplicates_agent_before_metrics(
@@ -220,6 +262,7 @@ def test_grade_batch_renders_independently_and_deduplicates_agent_before_metrics
     ]
     assert "batch-render" not in completed.stdout
     assert len({item["before_ref"] for item in report["outputs"]}) == 1
+    assert all("transformation_summary" in item for item in report["outputs"])
     assert all(
         "histogram_64" not in channel
         for item in report["outputs"]

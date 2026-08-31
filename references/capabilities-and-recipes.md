@@ -46,9 +46,9 @@ Choose intensity from the intended perceptual result and source latitude before 
 | `3` natural | Polished but faithful | Stronger correction without changing the scene's emotional key |
 | `3` creative/bold | Obvious authorship at first glance | Decisive curve, controlled deep blacks or brilliant highlights, clear dominant palette, color separation, and local light design where useful |
 
-For a level-3 creative or bold choice, values may move beyond the natural/correction baselines below when the source supports them. Prefer coordinated moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
+For a level-3 creative or bold choice, choose parameters from the visual thesis and source latitude before looking at the natural/correction baselines below. Those baselines describe correction-scale moves only; they are neither starting anchors nor soft limits for creative work. Prefer coordinated moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
 
-For a bold recipe, complete `visual_intent` and its three to five observable success criteria before choosing parameters. After rendering, strengthen only the stages responsible for any unmet criterion. Never weaken a bold selection merely because it differs strongly from the source.
+For a bold recipe, complete `visual_intent` and three to five observable success criteria before choosing parameters. Together they should make the visible target, protected structure, and likely artifact clear enough to reject a render. After rendering, require material visible change on at least two primary axes such as luminance key, dynamic range, color purity, spatial contrast, or local-light design. Metrics diagnose under-strength work but do not replace visual judgment.
 
 ## Creative structure and controlled extremes
 
@@ -108,62 +108,9 @@ For a multi-output render, place every complete recipe in one manifest and call 
 
 The manifest accepts exactly `schema_version` and `outputs`; version `1` requires `1–26` items. Every item accepts exactly a non-empty `output` path and one complete recipe following the contract below. Relative output paths resolve from the manifest directory. Output paths must be unique and must not resolve to the source. The CLI validates every manifest item before rendering begins, renders each result to a same-directory temporary path, and publishes final paths only after every encoded result passes verification. A failure removes temporary renders and preserves any pre-existing finals.
 
-### Illustrative full recipe
-
-The following recipe demonstrates the complete structure and how several control families can work together. It is not a default recipe or a checklist. Copy the required structural fields, but include a parameter section only when the photograph and visual intent justify it.
-
-```json
-{
-  "schema_version": 1,
-  "style": {
-    "id": "A",
-    "name": "自然还原",
-    "intensity": 3
-  },
-  "visual_intent": {
-    "brightness_key": "中等亮度，保留高光空气感",
-    "contrast_structure": "柔和中间调与稳定黑位",
-    "light_geometry": "顺应原图既有亮暗方向",
-    "palette": "中性主色，克制暖色支持",
-    "subject_separation": "通过明度和局部色彩纯度分离",
-    "texture": "自然清晰，不放大噪点"
-  },
-  "success_criteria": [
-    "主体与背景有清楚但自然的明度分离",
-    "重要高光保留纹理",
-    "中性色不出现可见偏色"
-  ],
-  "parameters": {
-    "basic": {
-      "exposure": 0.15,
-      "highlights": -0.1,
-      "vibrance": 0.06
-    },
-    "curve": [[0.0, 0.0], [0.5, 0.52], [1.0, 1.0]],
-    "channel_curves": {
-      "red": [[0.0, 0.0], [0.5, 0.52], [1.0, 1.0]]
-    },
-    "presence": {
-      "clarity": 0.12,
-      "texture": 0.08
-    },
-    "color_management": {
-      "rendering": "perceptual",
-      "gamut_mapping": "oklch_compress"
-    },
-    "hsl": {
-      "blue": {"saturation": 0.08, "luminance": -0.03}
-    },
-    "detail": {
-      "sharpen": 0.15,
-      "sharpen_threshold": 0.006,
-      "sharpen_edge_protection": 0.5
-    }
-  }
-}
-```
-
 The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `presence`, `color_management`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
+
+All numeric snippets in this reference exist only to demonstrate syntax or ordinary correction scale. Never reuse their hues, curve points, mask geometry, or magnitudes as a recipe seed. Derive active values independently from the current image and its source-relative visual intent.
 
 Omitted defaults are:
 
@@ -176,7 +123,7 @@ Omitted defaults are:
 
 ## Basic and tone controls
 
-These are **natural/correction baselines only**, not implicit limits for a creative level-3 recipe.
+These are **natural/correction baselines only**. Consult them after choosing a natural correction strategy. Do not use them to seed, cap, or judge a creative level-3 recipe; bold values follow the intended image and validator range.
 
 Accepted `basic` controls and ranges:
 
@@ -275,31 +222,17 @@ The omitted/default pair is the compatibility path and does not change legacy pi
 
 `oklch_compress` preserves in-range OKLCh lightness and hue while reducing excess chroma. Gamut mapping runs after global color shaping and again after creative local adjustments.
 
-Perceptual rendering, OKLCh compression, and 16-bit PNG use strict tagged-sRGB handling and may block on invalid or unsupported profile conversion. Before selecting one of these paths, read [technical-behavior.md](technical-behavior.md#color-management-and-icc) for the exact ICC behavior.
+Perceptual rendering, OKLCh compression, and 16-bit PNG use strict tagged-sRGB handling and may block on invalid or unsupported profile conversion.
 
 ## HSL
 
-Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral.
-
-```json
-"blue": {"hue": -8.0, "saturation": 0.12, "luminance": -0.05}
-```
+Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral. Choose the range and sign from the source pixels and intended destination family; never infer the sign from a style name alone.
 
 The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. For backward compatibility, the legacy HSL execution path clips the effective per-range saturation adjustment to `+1.0`; values from `+1.0` through `+1.5` remain accepted but produce the legacy `+1.0` effect. Keep ordinary hue corrections around `-20` to `+20` and saturation/luminance around `-0.25` to `+0.25`. Change only visibly relevant ranges.
 
 ## Color grading
 
-Accepted color-grading keys are `shadows`, `midtones`, `highlights`, `balance`, and `blending`. Each zone may contain `hue` and `saturation`; omitted zones or controls remain neutral.
-
-```json
-"color_grading": {
-  "shadows": {"hue": 220.0, "saturation": 0.08},
-  "midtones": {"hue": 30.0, "saturation": 0.03},
-  "highlights": {"hue": 40.0, "saturation": 0.06},
-  "balance": 0.05,
-  "blending": 0.55
-}
-```
+Accepted color-grading keys are `shadows`, `midtones`, `highlights`, `balance`, and `blending`. Each zone may contain `hue` and `saturation`; omitted zones or controls remain neutral. Select every zone hue from the intended relationship among actual source regions; do not default to a familiar complementary palette.
 
 Zone `hue` runs from `0` to `360` degrees and zone `saturation` from `0` to `1`. Keep saturation subtle for natural work, commonly `0.02` to `0.12`. A level-3 creative look may use stronger separation when skin and neutral objects remain intentional. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
 
@@ -412,5 +345,3 @@ Accepted `detail` and `output` controls and ranges:
 The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested. Use `sharpen_threshold` to suppress low-amplitude residuals such as noise, and `sharpen_edge_protection` to reduce rims around strong edges.
 
 For 16-bit PNG, the pipeline writes RGB16 or RGBA16 and preserves supported metadata; it cannot restore precision absent from the source. For 8-bit PNG, `png_dither: "tpdf"` adds deterministic zero-mean triangular noise before quantization and never touches alpha. Use it only for long smooth gradients that show or risk visible banding.
-
-Before selecting 16-bit PNG or dithering, read [technical-behavior.md](technical-behavior.md#detail-and-output-encoding) for dependency, compatibility, quantization, alpha, and encoder behavior.
