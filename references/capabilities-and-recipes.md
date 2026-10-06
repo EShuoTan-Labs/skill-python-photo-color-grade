@@ -44,19 +44,19 @@ For a multi-output render, place every complete recipe in one manifest and call 
   "schema_version": 1,
   "outputs": [
     {
-      "output": "IMG_1234_A3_自然通透.jpg",
+      "output": "IMG_1234_A3_direction.jpg",
       "recipe": {
         "schema_version": 1,
-        "style": {"id": "A", "name": "自然通透", "intensity": 3},
+        "style": {"id": "A", "name": "<direction name>", "intensity": 3},
         "visual_intent": {
-          "brightness_key": "明亮但保留高光层次",
-          "contrast_structure": "稳定黑位与柔和中间调",
-          "light_geometry": "顺应原图既有光向",
-          "palette": "中性主色与克制暖色",
-          "subject_separation": "用明度分离主体",
-          "texture": "自然清晰"
+          "brightness_key": "<intended tonal key>",
+          "contrast_structure": "<intended tonal relationships>",
+          "light_geometry": "<intended distribution of light>",
+          "palette": "<intended color relationships>",
+          "subject_separation": "<intended visual hierarchy>",
+          "texture": "<intended texture>"
         },
-        "success_criteria": ["主体分离自然", "重要高光有纹理", "中性色无明显偏色"],
+        "success_criteria": ["<visible creative outcome>", "<another visible creative outcome>", "<essential structure to retain>"],
         "parameters": {"basic": {"exposure": 0.15}}
       }
     }
