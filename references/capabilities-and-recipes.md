@@ -1,12 +1,10 @@
 # Capability and Recipe Reference
 
-Read this reference completely before designing directions or recipes. It is the authoritative map of what the pipeline can do and the contract for expressing those decisions. It is a toolbox, not a checklist: define the visual intent first, then activate only the controls that materially serve it. Omitted controls stay neutral.
+Use the recipe contract and the sections for active controls. Omitted controls stay neutral. Numeric examples demonstrate syntax; derive the actual recipe from the photograph.
 
 ## Contents
 
 - [Capability map](#capability-map)
-- [Intensity and creative range](#intensity-and-creative-range)
-- [Creative structure and controlled extremes](#creative-structure-and-controlled-extremes)
 - [Recipe contract](#recipe-contract)
 - [Basic and tone controls](#basic-and-tone-controls)
 - [Point curve](#point-curve)
@@ -34,46 +32,6 @@ Choose controls from the photograph's actual visual needs. Combining several fam
 | Control noise and output detail | `detail.denoise`, `sharpen`, threshold, edge protection | Keep off unless technically justified; inspect encoded detail at 100% |
 | Improve perceptual color shaping or gamut behavior | `color_management.rendering`, `gamut_mapping` | Strict paths require managed tagged-sRGB conversion |
 | Preserve output precision or reduce gradient banding | `output.png_bit_depth`, `png_dither` | 16-bit cannot restore missing source precision; dithering applies only to 8-bit PNG |
-
-## Intensity and creative range
-
-Choose intensity from the intended perceptual result and source latitude before consulting any parameter baseline:
-
-| Level | Intended result | Typical strategy |
-|---|---|---|
-| `1` | Close to source | Correct cast/exposure, gentle curve, minimal HSL |
-| `2` | Clearly styled | Distinct curve and palette, selective HSL, optional subtle local shaping |
-| `3` natural | Polished but faithful | Stronger correction without changing the scene's emotional key |
-| `3` creative/bold | Obvious authorship at first glance | Decisive curve, controlled deep blacks or brilliant highlights, clear dominant palette, color separation, and local light design where useful |
-
-For a level-3 creative or bold choice, choose parameters from the visual thesis and source latitude before looking at the natural/correction baselines below. Those baselines describe correction-scale moves only; they are neither starting anchors nor soft limits for creative work. Prefer coordinated moves across tone, HSL, grading, and masks over one extreme slider. The goal is a coherent visual concept, not numerical aggression.
-
-For a bold recipe, complete `visual_intent` and three to five observable success criteria before choosing parameters. Together they should make the visible target, protected structure, and likely artifact clear enough to reject a render. After rendering, require material visible change on at least two primary axes such as luminance key, dynamic range, color purity, spatial contrast, or local-light design. Metrics diagnose under-strength work but do not replace visual judgment.
-
-## Creative structure and controlled extremes
-
-Build the tonal architecture before polishing the palette. A cinematic result must not depend on color alone.
-
-| Visual need | Prefer |
-|---|---|
-| Establish global light/dark hierarchy | Exposure, whites/blacks, contrast, point curve |
-| Extend an existing directional light source | Broad linear mask aligned with the source, then a feathered radial refinement if useful |
-| Separate a focal region from negative space | Coordinated focal dodge and restrained inverted radial or edge burn |
-| Make reflective texture luminous | Whites/highlights plus a luminance mask; accept localized brilliance when intentional |
-| Separate foreground and background color | HSL luminance/saturation plus three-way grading |
-| Create filmic softness without flatness | Lift the black endpoint selectively while retaining midtone shape and local contrast |
-
-Use the smallest mask set that expresses the light design. A single undirected center radial is not a substitute for a directional concept. Do not invent a light direction that contradicts the source; when the source is flat, use broad plausible zoning rather than fake hard beams.
-
-Run these anti-filter checks before accepting a level-3 creative render:
-
-- In a mental grayscale preview, does the light hierarchy remain distinctive?
-- Is the focal region separated by more than saturation alone?
-- Did one global hue wash contaminate neutrals, skin, or reflective surfaces?
-- Are local masks shaping light, or merely making the center brighter?
-- Does the result show a clear concept at first glance without the original beside it?
-
-Do not optimize for zero clipping. Controlled localized specular clipping, near-white reflective highlights, or deep near-black negative space can be intentional. Reject broad accidental clipping, posterization, hue breakage, lost facial/subject structure, or crushed texture across important regions. Judge the spatial location and visual purpose of extremes, not only their global ratio.
 
 ## Recipe contract
 
@@ -106,7 +64,7 @@ For a multi-output render, place every complete recipe in one manifest and call 
 }
 ```
 
-The manifest accepts exactly `schema_version` and `outputs`; version `1` requires `1–26` items. Every item accepts exactly a non-empty `output` path and one complete recipe following the contract below. Relative output paths resolve from the manifest directory. Output paths must be unique and must not resolve to the source. The CLI validates every manifest item before rendering begins, renders each result to a same-directory temporary path, and publishes final paths only after every encoded result passes verification. A failure removes temporary renders and preserves any pre-existing finals.
+The manifest accepts exactly `schema_version` and `outputs`; version `1` requires `1–26` items. Every item accepts exactly a non-empty `output` path and one complete recipe following the contract below. Relative output paths resolve from the manifest directory. Output paths must be unique and must not resolve to the source. The CLI validates every manifest item before rendering begins, renders each result to a same-directory temporary path, and publishes final paths only after every encoded result passes verification. A failure removes temporary renders and preserves any pre-existing finals. Single-output `grade` also verifies a sibling temporary file before replacing its final path.
 
 The structured fields record observable decisions, not private chain-of-thought. Use exactly the recipe, `style`, and `visual_intent` keys shown above. Set `schema_version` to `1`, use one uppercase letter for `style.id`, set intensity to `1`, `2`, or `3`, and provide three to five non-empty `success_criteria`. Accepted `parameters` sections are `basic`, `curve`, `channel_curves`, `presence`, `color_management`, `hsl`, `color_grading`, `local_corrections`, `local_adjustments`, `detail`, and `output`; omit inactive sections.
 
@@ -123,24 +81,22 @@ Omitted defaults are:
 
 ## Basic and tone controls
 
-These are **natural/correction baselines only**. Consult them after choosing a natural correction strategy. Do not use them to seed, cap, or judge a creative level-3 recipe; bold values follow the intended image and validator range.
-
 Accepted `basic` controls and ranges:
 
-| Recipe control | Meaning | Validator accepts | Natural/correction baseline |
-|---|---|---:|---:|
-| `temperature` | Warm (+) or cool (-) | `-1` to `+1` | `-0.15` to `+0.15` |
-| `tint` | Magenta (+) or green (-) | `-1` to `+1` | `-0.08` to `+0.08` |
-| `exposure` | Photographic exposure stops | `-4` to `+4` | `-0.50` to `+0.50` |
-| `highlights` | Bright-region tone | `-1` to `+1` | `-0.30` to `+0.30` |
-| `shadows` | Dark-region tone | `-1` to `+1` | `-0.30` to `+0.30` |
-| `whites` | White point region | `-1` to `+1` | `-0.20` to `+0.20` |
-| `blacks` | Black point region | `-1` to `+1` | `-0.20` to `+0.20` |
-| `contrast` | Midpoint contrast | `-1` to `+1` | `-0.20` to `+0.20` |
-| `vibrance` | Low-saturation-weighted color | `-1` to `+1` | `-0.20` to `+0.20` |
-| `saturation` | Global saturation | `-1` to `+1` | `-0.15` to `+0.15` |
+| Recipe control | Meaning | Validator accepts |
+|---|---|---:|
+| `temperature` | Warm (+) or cool (-) | `-1` to `+1` |
+| `tint` | Magenta (+) or green (-) | `-1` to `+1` |
+| `exposure` | Photographic exposure stops | `-4` to `+4` |
+| `highlights` | Bright-region tone | `-1` to `+1` |
+| `shadows` | Dark-region tone | `-1` to `+1` |
+| `whites` | White point region | `-1` to `+1` |
+| `blacks` | Black point region | `-1` to `+1` |
+| `contrast` | Midpoint contrast | `-1` to `+1` |
+| `vibrance` | Low-saturation-weighted color | `-1` to `+1` |
+| `saturation` | Global saturation | `-1` to `+1` |
 
-Values are normalized except exposure. Prefer vibrance over saturation for portraits.
+Values are normalized except exposure.
 
 ## Point curve
 
@@ -189,9 +145,9 @@ This order also applies inside each local adjustment: local main curve first, th
 
 | Control | Scale and effect | Guidance |
 |---|---|---|
-| `dehaze` | Low-frequency luminance-range recovery with black/highlight protection and restrained chroma recovery | Use positive values for genuine atmospheric veiling or compressed low-frequency separation; ordinary range `0.05–0.25`. Negative values gently flatten low-frequency separation. |
-| `clarity` | Mid-frequency, midtone-weighted local contrast | Use for architecture, landscape structure, or dimensional separation; ordinary range `0.05–0.30`. Negative values soften mid-scale structure. |
-| `texture` | Small-scale detail gain with a spatial-coherence noise gate | Use for foliage, fabric, stone, or fine reflective detail; ordinary range `0.04–0.25`. Negative values soften fine texture without replacing denoise. |
+| `dehaze` | Low-frequency luminance-range recovery with black/highlight protection and restrained chroma recovery | Positive values expand low-frequency separation; negative values flatten it. |
+| `clarity` | Mid-frequency, midtone-weighted local contrast | Positive values increase mid-scale contrast; negative values soften it. |
+| `texture` | Small-scale detail gain with a spatial-coherence noise gate | Positive values enhance fine texture; negative values soften it. |
 
 The fixed global order is `dehaze` → `clarity` → `texture`, after `local_corrections` and before vibrance, saturation, HSL, and color grading.
 
@@ -228,13 +184,13 @@ Perceptual rendering, OKLCh compression, and 16-bit PNG use strict tagged-sRGB h
 
 Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral. Choose the range and sign from the source pixels and intended destination family; never infer the sign from a style name alone.
 
-The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. For backward compatibility, the legacy HSL execution path clips the effective per-range saturation adjustment to `+1.0`; values from `+1.0` through `+1.5` remain accepted but produce the legacy `+1.0` effect. Keep ordinary hue corrections around `-20` to `+20` and saturation/luminance around `-0.25` to `+0.25`. Change only visibly relevant ranges.
+The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. For backward compatibility, the legacy HSL execution path clips the effective per-range saturation adjustment to `+1.0`; values from `+1.0` through `+1.5` remain accepted but produce the legacy `+1.0` effect. Change only visibly relevant ranges.
 
 ## Color grading
 
 Accepted color-grading keys are `shadows`, `midtones`, `highlights`, `balance`, and `blending`. Each zone may contain `hue` and `saturation`; omitted zones or controls remain neutral. Select every zone hue from the intended relationship among actual source regions; do not default to a familiar complementary palette.
 
-Zone `hue` runs from `0` to `360` degrees and zone `saturation` from `0` to `1`. Keep saturation subtle for natural work, commonly `0.02` to `0.12`. A level-3 creative look may use stronger separation when skin and neutral objects remain intentional. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
+Zone `hue` runs from `0` to `360` degrees and zone `saturation` from `0` to `1`. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
 
 ## Local masks
 
@@ -324,8 +280,6 @@ Inside one local item, processing is fixed as local tone/curves → local clarit
 
 Use masks to implement photographic light design rather than semantic editing. For bold work, combine only the masks the scene needs, such as a broad linear burn to deepen an edge, a radial dodge placed over the existing focal region, or a luminance mask to control brilliant highlights. Keep feathering broad enough to avoid visible transitions. Do not add light that contradicts the source direction.
 
-For a directional concept, align linear masks with the observed bright-to-dark path and use radial masks only to refine focal emphasis. Inspect the result in color and mentally in monochrome. If removing color would reveal only a generic vignette, redesign the mask geometry.
-
 Validation is recursive. Unknown or missing node fields, unsupported operations, invalid child counts, excessive depth or leaf count, non-finite numbers, and out-of-range values are errors. The `grade` CLI reports them on stderr with exit code `2` before creating an output file.
 
 ## Detail and output
@@ -346,4 +300,4 @@ Accepted `detail` and `output` controls and ranges:
 
 The script applies denoise before tonal amplification and sharpening after all grading. Keep both off unless technically justified or explicitly requested. Use `sharpen_threshold` to suppress low-amplitude residuals such as noise, and `sharpen_edge_protection` to reduce rims around strong edges.
 
-For 16-bit PNG, the pipeline writes RGB16 or RGBA16 and preserves supported metadata; it cannot restore precision absent from the source. For 8-bit PNG, `png_dither: "tpdf"` adds deterministic zero-mean triangular noise before quantization and never touches alpha. Use it only for long smooth gradients that show or risk visible banding.
+Analysis, grading, and comparison decode 16-bit sRGB PNG sources at native precision, including when delivering 8-bit output. Non-sRGB 16-bit sources require external conversion to sRGB16. For 16-bit PNG output, the pipeline writes RGB16 or RGBA16 and preserves supported metadata; it cannot restore precision absent from the source. For 8-bit PNG, `png_dither: "tpdf"` adds deterministic zero-mean triangular noise before quantization and never touches alpha. Use it only for long smooth gradients that show or risk visible banding.

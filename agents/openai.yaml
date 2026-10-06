@@ -1,7 +1,7 @@
 interface:
   display_name: "Python 照片调色"
   short_description: "分析照片潜力，输出3–6张审美跨度明确的完整非生成式成片"
-  default_prompt: "使用 $python-photo-color-grade 直接分析并调色这张照片，首轮输出3–6张场景自适应、组合变化充分且彼此有明确审美差异的成片。"
+  default_prompt: "使用 $python-photo-color-grade 为这张照片调色，首轮输出3–6张审美方向鲜明的成片，包含至少一张大胆风格的英雄成片。"
   icon_small: "./assets/icon.svg"
   icon_large: "./assets/icon.svg"
 policy:

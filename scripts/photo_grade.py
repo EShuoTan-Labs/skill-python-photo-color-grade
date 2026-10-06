@@ -811,10 +811,13 @@ def perceptual_palette_metrics(values: np.ndarray, luma: np.ndarray) -> dict[str
         hue_summary = circular_hue_summary(zone_oklch[:, 2], zone_oklch[:, 1])
         zone_reports[name] = {
             "pixel_ratio": round(float(np.mean(mask)), 6),
-            "luma_mean": round(float(np.mean(zone_luma)), 5),
-            "rgb_mean": [round(float(value), 5) for value in np.mean(zone_values, axis=0)],
-            "oklch_lightness_mean": round(float(np.mean(zone_oklch[:, 0])), 5),
-            "oklch_chroma_mean": round(float(np.mean(zone_oklch[:, 1])), 5),
+            "luma_mean": round(float(np.mean(zone_luma)), 5) if zone_luma.size else None,
+            "rgb_mean": (
+                [round(float(value), 5) for value in np.mean(zone_values, axis=0)]
+                if zone_luma.size else [None] * 3
+            ),
+            "oklch_lightness_mean": round(float(np.mean(zone_oklch[:, 0])), 5) if zone_luma.size else None,
+            "oklch_chroma_mean": round(float(np.mean(zone_oklch[:, 1])), 5) if zone_luma.size else None,
             **{key: value for key, value in hue_summary.items() if key != "hue_histogram_12"},
         }
     return {
@@ -920,9 +923,7 @@ def load_image(
                 f"preserve {detected_format} with a {metadata['recommended_extension']} output unless "
                 "format conversion is explicitly requested."
             )
-        has_alpha = source.mode in {"RGBA", "LA"} or (
-            source.mode == "P" and "transparency" in source.info
-        )
+        has_alpha = source.mode in {"RGBA", "LA"} or "transparency" in source.info
         if preserve_png16 and source.format == "PNG" and source_bit_depth == 16:
             rgb, alpha, direct = read_png16(path)
             has_alpha = alpha is not None
@@ -981,10 +982,11 @@ def load_image(
             image = source.convert("RGBA") if has_alpha else source.convert("RGB")
             if metadata["icc_profile"]:
                 try:
-                    in_profile = ImageCms.ImageCmsProfile(metadata["icc_profile"])
+                    in_profile = ImageCms.ImageCmsProfile(io.BytesIO(metadata["icc_profile"]))
                     out_profile = ImageCms.createProfile("sRGB")
                     output_mode = "RGBA" if has_alpha else "RGB"
-                    image = ImageCms.profileToProfile(image, in_profile, out_profile, outputMode=output_mode)
+                    color_source = source if source.mode == "CMYK" else image
+                    image = ImageCms.profileToProfile(color_source, in_profile, out_profile, outputMode=output_mode)
                     metadata["icc_profile"] = ImageCms.ImageCmsProfile(out_profile).tobytes()
                     metadata["icc_status"] = "converted_to_srgb"
                 except Exception:
@@ -1099,7 +1101,13 @@ def image_metrics(rgb: np.ndarray, alpha: np.ndarray | None = None) -> dict[str,
 
 
 def analyze(path: Path) -> dict[str, Any]:
-    rgb, alpha, meta = load_image(path)
+    rgb, alpha, meta = load_image(path, preserve_png16=True)
+    return analysis_report(path, rgb, alpha, meta)
+
+
+def analysis_report(
+    path: Path, rgb: np.ndarray, alpha: np.ndarray | None, meta: dict[str, Any]
+) -> dict[str, Any]:
     result = {
         "file": str(path),
         "format": meta["format"],
@@ -2047,7 +2055,7 @@ def validate_grade_request(
     require_supported(source)
     require_supported(output)
     requested_output_format = format_for_extension(output)
-    if source == output:
+    if source == output or (output.exists() and source.samefile(output)):
         raise ValueError("Refusing to overwrite the original image.")
     output_is_png = output.suffix.lower() == ".png"
     if not output_is_png and (settings.png_bit_depth != 8 or settings.png_dither != "none"):
@@ -2062,6 +2070,23 @@ def validate_grade_request(
 def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: dict[str, Any]) -> dict[str, Any]:
     source = Path(args.input).resolve()
     output = Path(args.output).resolve()
+    validate_grade_request(source, output, settings)
+    temporary = create_sibling_temp_path(output, "grade-render")
+    try:
+        temporary_args = argparse.Namespace(
+            input=str(source), output=str(temporary), show_parameters=args.show_parameters
+        )
+        result = _render_grade(temporary_args, settings, recipe)
+        temporary.replace(output)
+        result["output"] = str(output)
+        return result
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _render_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: dict[str, Any]) -> dict[str, Any]:
+    source = Path(args.input).resolve()
+    output = Path(args.output).resolve()
     requested_output_format, output_is_png = validate_grade_request(source, output, settings)
     strict_color = (
         settings.rendering != "legacy"
@@ -2071,7 +2096,7 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
     rgb, alpha, meta = load_image(
         source,
         strict_color_management=strict_color,
-        preserve_png16=settings.png_bit_depth == 16,
+        preserve_png16=True,
     )
     before = image_metrics(rgb, alpha)
     diagnostics: dict[str, Any] = {}
@@ -2150,7 +2175,10 @@ def run_grade(args: argparse.Namespace, settings: argparse.Namespace, recipe: di
             "output_bit_depth": check_meta["source_bit_depth"],
             "png_dither": settings.png_dither if output_is_png else "not_applicable",
             "icc_input_status": meta["icc_status"],
-            "icc_output": "srgb" if meta.get("icc_profile") else "none",
+            "icc_output": (
+                "unverified" if meta["icc_status"] == "conversion_failed_legacy_fallback"
+                else "srgb" if check_meta.get("icc_profile") else "none"
+            ),
             "libraries": runtime_versions(),
         },
     }
@@ -2415,7 +2443,7 @@ def run_grade_batch(args: argparse.Namespace) -> dict[str, Any]:
                 output=str(temporary),
                 show_parameters=args.show_parameters,
             )
-            report = run_grade(item_args, settings, recipe)
+            report = _render_grade(item_args, settings, recipe)
             report["output"] = str(output)
             reports.append(report)
         if args.report == "agent":
@@ -2449,23 +2477,21 @@ def run_grade_batch(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def compare_images(original: Path, graded: Path) -> dict[str, Any]:
-    first = analyze(original)
-    second = analyze(graded)
+    first_rgb, first_alpha, first_meta = load_image(original, preserve_png16=True)
+    second_rgb, second_alpha, second_meta = load_image(graded, preserve_png16=True)
+    first = analysis_report(original, first_rgb, first_alpha, first_meta)
+    second = analysis_report(graded, second_rgb, second_alpha, second_meta)
     same_geometry = (first["width"], first["height"]) == (second["width"], second["height"])
     same_alpha = first["has_alpha"] == second["has_alpha"]
-    _, first_alpha, _ = load_image(original)
-    _, second_alpha, _ = load_image(graded)
-    same_alpha_values = same_alpha and (
+    same_alpha_values = same_geometry and same_alpha and (
         first_alpha is None
         or np.array_equal(
-            np.rint(first_alpha * 255.0).astype(np.uint8),
-            np.rint(second_alpha * 255.0).astype(np.uint8),
+            np.rint(first_alpha * 65535.0).astype(np.uint16),
+            np.rint(second_alpha * 65535.0).astype(np.uint16),
         )
     )
     channel_difference = None
     if same_geometry:
-        first_rgb, first_alpha, _ = load_image(original)
-        second_rgb, _, _ = load_image(graded)
         visible = (
             np.ones(first_rgb.shape[:2], dtype=bool)
             if first_alpha is None
@@ -2527,8 +2553,9 @@ def transformation_summary(before: dict[str, Any], after: dict[str, Any]) -> dic
     before_grid = np.asarray(before["spatial_luma_grid_3x3"], dtype=np.float64)
     after_grid = np.asarray(after["spatial_luma_grid_3x3"], dtype=np.float64)
     grid_delta = after_grid - before_grid
-    before_range = float(np.max(before_grid) - np.min(before_grid))
-    after_range = float(np.max(after_grid) - np.min(after_grid))
+    valid_grid_delta = grid_delta[np.isfinite(grid_delta)]
+    before_range = float(np.nanmax(before_grid) - np.nanmin(before_grid))
+    after_range = float(np.nanmax(after_grid) - np.nanmin(after_grid))
     before_palette = before["perceptual_palette"]
     after_palette = after["perceptual_palette"]
 
@@ -2542,17 +2569,16 @@ def transformation_summary(before: dict[str, Any], after: dict[str, Any]) -> dic
             return None
         return round(float((second - first + 180.0) % 360.0 - 180.0), 3)
 
+    def optional_delta(first: float | None, second: float | None) -> float | None:
+        return None if first is None or second is None else round(float(second) - float(first), 6)
+
     zone_deltas: dict[str, Any] = {}
     for zone_name, before_zone in before_palette["tonal_zones"].items():
         after_zone = after_palette["tonal_zones"][zone_name]
         zone_deltas[zone_name] = {
-            "luma_mean_delta": round(
-                float(after_zone["luma_mean"]) - float(before_zone["luma_mean"]), 6
-            ),
-            "oklch_chroma_mean_delta": round(
-                float(after_zone["oklch_chroma_mean"])
-                - float(before_zone["oklch_chroma_mean"]),
-                6,
+            "luma_mean_delta": optional_delta(before_zone["luma_mean"], after_zone["luma_mean"]),
+            "oklch_chroma_mean_delta": optional_delta(
+                before_zone["oklch_chroma_mean"], after_zone["oklch_chroma_mean"]
             ),
             "dominant_hue_delta_degrees": hue_delta(
                 before_zone["dominant_hue_degrees"],
@@ -2565,7 +2591,7 @@ def transformation_summary(before: dict[str, Any], after: dict[str, Any]) -> dic
                 "dominant_hue_degrees"
             ],
             "rgb_mean_delta": [
-                round(float(after_value) - float(before_value), 6)
+                optional_delta(before_value, after_value)
                 for before_value, after_value in zip(
                     before_zone["rgb_mean"], after_zone["rgb_mean"]
                 )
@@ -2642,9 +2668,16 @@ def transformation_summary(before: dict[str, Any], after: dict[str, Any]) -> dic
             "neutral_candidate_rgb_mean_delta": neutral_delta,
         },
         "spatial_luma": {
-            "cell_delta_3x3": np.round(grid_delta, 6).tolist(),
-            "mean_absolute_cell_delta": round(float(np.mean(np.abs(grid_delta))), 6),
-            "max_absolute_cell_delta": round(float(np.max(np.abs(grid_delta))), 6),
+            "cell_delta_3x3": [
+                [round(float(value), 6) if np.isfinite(value) else None for value in row]
+                for row in grid_delta
+            ],
+            "mean_absolute_cell_delta": (
+                round(float(np.mean(np.abs(valid_grid_delta))), 6) if valid_grid_delta.size else None
+            ),
+            "max_absolute_cell_delta": (
+                round(float(np.max(np.abs(valid_grid_delta))), 6) if valid_grid_delta.size else None
+            ),
             "cell_range_before": round(before_range, 6),
             "cell_range_after": round(after_range, 6),
             "cell_range_delta": round(after_range - before_range, 6),
