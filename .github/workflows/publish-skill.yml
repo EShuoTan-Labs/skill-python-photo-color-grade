@@ -3,7 +3,7 @@ name: Publish skill release
 on:
   push:
     branches:
-      - main
+      - '**'
   workflow_dispatch:
 
 permissions:
@@ -92,30 +92,23 @@ jobs:
 
           printf 'asset_path=%s\n' "${asset_path}" >> "${GITHUB_OUTPUT}"
 
-      - name: Replace the GitHub Release asset
+      - name: Publish the GitHub Release asset
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
 
-          release_tag="skill-latest"
-          release_title="Latest skill build (${GITHUB_SHA::7})"
-          release_notes="Automated build from main commit ${GITHUB_SHA}."
+          release_tag="skill-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          release_title="Skill build: ${GITHUB_REF_NAME} (${GITHUB_SHA::7})"
+          release_notes="Automated build from branch ${GITHUB_REF_NAME}, commit ${GITHUB_SHA}."
 
-          # Remove only releases created by this workflow; manual releases are untouched.
-          while IFS= read -r old_tag; do
-            [ -z "${old_tag}" ] && continue
-            gh release delete "${old_tag}" \
-              --cleanup-tag \
-              --yes \
-              --repo "${GITHUB_REPOSITORY}"
-          done < <(
-            gh api --paginate \
-              "/repos/${GITHUB_REPOSITORY}/releases" \
-              --jq '.[] | select(.tag_name | startswith("skill-")) | .tag_name'
-          )
+          release_flags=(--prerelease --latest=false)
+          if [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" == "${DEFAULT_BRANCH}" ]]; then
+            release_flags=(--latest)
+          fi
 
           gh release create \
             "${release_tag}" \
@@ -123,5 +116,5 @@ jobs:
             --target "${GITHUB_SHA}" \
             --title "${release_title}" \
             --notes "${release_notes}" \
-            --latest \
+            "${release_flags[@]}" \
             --repo "${GITHUB_REPOSITORY}"
