@@ -141,6 +141,30 @@ def test_legacy_leaf_masks_remain_pixel_exact(mask_type: str) -> None:
     assert np.array_equal(actual, expected)
 
 
+def test_zero_feather_radial_is_an_exact_finite_hard_edge() -> None:
+    photo_grade = load_module()
+    rgb = np.zeros((3, 3, 3), dtype=np.float32)
+    specification = leaf(
+        "radial",
+        center=[0.5, 0.5],
+        radius=[0.5, 0.5],
+        feather=0.0,
+    )
+
+    actual = photo_grade.build_local_mask(rgb, specification)
+    expected = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    assert np.array_equal(actual, expected)
+    assert np.all(np.isfinite(actual))
+
+
 @pytest.mark.parametrize(("operation", "reference"), [("and", np.minimum), ("or", np.maximum)])
 def test_and_or_match_reference_are_commutative_idempotent_and_bounded(operation, reference) -> None:
     photo_grade = load_module()

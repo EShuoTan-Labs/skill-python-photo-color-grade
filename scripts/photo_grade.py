@@ -1706,7 +1706,10 @@ def _build_local_mask(
         rx, ry = max(float(radius[0]), 1e-4), max(float(radius[1]), 1e-4)
         distance = np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)
         feather = float(np.clip(specification.get("feather", 0.35), 0.0, 0.99))
-        mask = 1.0 - smoothstep(1.0 - feather, 1.0, distance)
+        if feather == 0.0:
+            mask = (distance < 1.0).astype(np.float32)
+        else:
+            mask = 1.0 - smoothstep(1.0 - feather, 1.0, distance)
     elif mask_type == "composite":
         operation = specification.get("operation")
         inputs = specification.get("inputs")

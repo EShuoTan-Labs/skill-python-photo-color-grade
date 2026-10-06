@@ -253,6 +253,8 @@ Place each mask in one stage according to its purpose. Every mask node requires 
 | `radial` | `center: [x,y]` from `0` to `1`; `radius: [rx,ry]` from `0.0001` to `1`; `feather` from `0` to `0.99` |
 | `composite` | `operation`: `"and"`, `"or"`, or `"subtract"`; `inputs`: an array of child mask nodes |
 
+For `luminance`, `feather` is a half-width in normalized luminance: each threshold transitions across `threshold - feather` to `threshold + feather`, so the complete transition spans `2 * feather`. For `radial`, `feather` is a unitless fraction of the ellipse radius, not a fraction of the full image or a pixel distance. Its transition runs from normalized radial distance `1 - feather` to `1`; along the ellipse axes, that corresponds to `feather * rx` of image width and `feather * ry` of image height. A radial `feather` of `0` produces an exact hard edge.
+
 For `linear`, let `t = dot(p - start, end - start) / ||end - start||²` for normalized pixel position `p`. Base coverage is `0` when `t <= 0`, `t²(3 - 2t)` when `0 < t < 1`, and `1` when `t >= 1`. Thus `start` is the zero-coverage end, `end` is the full-coverage end, values are clipped beyond both ends, and reversing the endpoints reverses the gradient. The node's `invert` and `opacity` apply afterward.
 
 A composite mask combines already feathered mask coverage without semantic segmentation or a second feathering pass. Its deterministic operations are:
