@@ -9,7 +9,7 @@ Produce finished photographs from the original pixels using `scripts/photo_grade
 
 ## Outcome
 
-For an open-ended first request, deliver **3–6 materially distinct full-resolution finals**, including at least one bold **hero final** with the visual authorship of an exceptional photographic colorist. Choose the directions from the photograph itself. The hero should have a coherent, decisive interpretation across tone, palette, or spatial hierarchy and retain important subject structure.
+For an open-ended first request, deliver **3–6 materially distinct full-resolution finals**, including at least one bold **hero final** with the visual authorship of an exceptional photographic colorist. Develop the photograph's existing light and inherent colors into their strongest expression through rich tonal depth, nuanced color, and a coherent visual focus.
 
 Explicit user choices of style, count, strength, and format take precedence. Start directly when a usable photograph is available. Use uppercase style IDs (`A`, `B`, …) and intensity `1` (subtle), `2` (clearly styled), or `3` (fully expressed, including natural work).
 
@@ -23,7 +23,7 @@ python "<skill-dir>/scripts/photo_grade.py" analyze "<input>" --report agent
 
 Statistics are secondary evidence for technical diagnosis; they do not prescribe aesthetics or slider values. Resolve visual uncertainty by inspecting the image at the relevant scale. Encoding facts such as format, bit depth, and ICC status come from the report.
 
-Read the recipe contract and relevant control sections in [references/capabilities-and-recipes.md](references/capabilities-and-recipes.md). Design each result's observable intent before choosing parameters. Use the structured `visual_intent` and `success_criteria` fields to record its target and important structure to preserve. Select directions with visible differences in at least two of tone, palette, saturation, spatial emphasis, depth, or texture. Derive active values and mask geometry from this image.
+Read the recipe contract and relevant control sections in [references/capabilities-and-recipes.md](references/capabilities-and-recipes.md). Explore distinct creative interpretations of the photograph. Record each result's visible ambition and essential structure in `visual_intent` and `success_criteria`, then derive its parameters and masks from the image.
 
 For hue controls, use the coordinate-specific fields in that reference: HSL is a weighted **shift**, three-way grading specifies a **target direction**. Perceptual rendering uses OKLCh for both adjustments, while HSL selection and color masks use HSV. Consult the hue swatches when choosing angles.
 
@@ -43,7 +43,7 @@ Keep the original, manifest, final recipes, and render report available for repr
 
 View every encoded final at full frame and inspect representative 100% detail: focal region, strongest edges, smooth gradients, and fine texture where present. Check intent, important tonal structure, credible color, banding, halos, noise, and detail. Use the returned `before`, `after`, `transformation_summary`, and encoding diagnostics to investigate issues. `--report full` adds histogram detail when needed; `compare` is available if the render report was lost.
 
-Judge the set together for meaningful aesthetic range and a compelling hero. Revise a result that misses its intent, duplicates another, or develops artifacts, then render it again from the original. Successful directions can stay as they are.
+For the hero, render a competing interpretation before selecting the final. View both alongside the source; compare each candidate's strongest quality and weakest visual relationship, then select the most accomplished whole image. Judge every result by its visible ambition, revise weaker work from the original, and deliver a set with meaningful aesthetic range.
 
 Show every final with its own short heading, image, and download link, using absolute local paths supported by the host (Such as: `![label](D:/absolute/path/photo.jpg)` and `[label](D:/absolute/path/photo.jpg)`). Identify the hero in its heading. Describe visible differences briefly; provide exact settings when requested.
 
@@ -58,4 +58,4 @@ Show every final with its own short heading, image, and download link, using abs
 
 ## Follow-ups
 
-A letter alone keeps intensity `3`; a trailing digit applies to every selected letter (`B` → `B3`, `AC2` → `A2` and `C2`). Interpret natural-language refinements against the referenced direction, revise its recipe, and render from the original. Return the requested revised finals.
+A letter alone keeps intensity `3`; a trailing digit applies to every selected letter (`B` → `B3`, `AC2` → `A2` and `C2`). Intensity describes the visible expression; the script records this label while `parameters` determine the pixels. Interpret refinements against the referenced direction, revise its actual parameters, and render from the original. Return the requested revised finals.
