@@ -25,6 +25,8 @@ Statistics are secondary evidence for technical diagnosis; they do not prescribe
 
 Read the recipe contract and relevant control sections in [references/capabilities-and-recipes.md](references/capabilities-and-recipes.md). Design each result's observable intent before choosing parameters. Use the structured `visual_intent` and `success_criteria` fields to record its target and important structure to preserve. Select directions with visible differences in at least two of tone, palette, saturation, spatial emphasis, depth, or texture. Derive active values and mask geometry from this image.
 
+For hue controls, use the coordinate-specific fields in that reference: HSL is a weighted **shift**, three-way grading specifies a **target direction**. Perceptual rendering uses OKLCh for both adjustments, while HSL selection and color masks use HSV. Consult the hue swatches when choosing angles.
+
 ## Render
 
 Write a `schema_version: 1` manifest containing one complete recipe and output path per result. Include only active parameter sections; neutral defaults are supplied by the script. Relative paths resolve from the manifest directory. Render each recipe independently from the original:

@@ -12,6 +12,7 @@ Use the recipe contract and the sections for active controls. Omitted controls s
 - [Presence](#presence)
 - [Color management](#color-management)
 - [HSL](#hsl)
+- [Hue coordinates and swatches](#hue-coordinates-and-swatches)
 - [Color grading](#color-grading)
 - [Local masks](#local-masks)
 - [Detail and output](#detail-and-output)
@@ -182,15 +183,47 @@ Perceptual rendering, OKLCh compression, and 16-bit PNG use strict tagged-sRGB h
 
 ## HSL
 
-Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain `hue`, `saturation`, and `luminance`; omitted controls remain neutral. Choose the range and sign from the source pixels and intended destination family; never infer the sign from a style name alone.
+Accepted HSL color keys are `red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`, and `magenta`. Each included color object may contain one hue-shift field, `saturation`, and `luminance`; omitted controls remain neutral. Use `hue_shift_oklch` with perceptual rendering or `hue_shift_hsv` with legacy rendering. Choose the range and sign from the source pixels and intended destination family.
 
-The validator accepts `hue` from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. For backward compatibility, the legacy HSL execution path clips the effective per-range saturation adjustment to `+1.0`; values from `+1.0` through `+1.5` remain accepted but produce the legacy `+1.0` effect. Change only visibly relevant ranges.
+The validator accepts each hue-shift field from `-90` to `+90` degrees, `saturation` from `-1` to `+1.5`, and `luminance` from `-1` to `+1`. For backward compatibility, the legacy HSL execution path clips the effective per-range saturation adjustment to `+1.0`; values from `+1.0` through `+1.5` remain accepted but produce the legacy `+1.0` effect. Change only visibly relevant ranges.
 
 ## Color grading
 
-Accepted color-grading keys are `shadows`, `midtones`, `highlights`, `balance`, and `blending`. Each zone may contain `hue` and `saturation`; omitted zones or controls remain neutral. Select every zone hue from the intended relationship among actual source regions; do not default to a familiar complementary palette.
+Accepted color-grading keys are `shadows`, `midtones`, `highlights`, `balance`, and `blending`. Each zone may contain one target-hue field and `saturation`; omitted zones or controls remain neutral. Use `target_hue_oklch` with perceptual rendering or `target_hue_hsv` with legacy rendering. Select every zone hue from the intended relationship among actual source regions.
 
-Zone `hue` runs from `0` to `360` degrees and zone `saturation` from `0` to `1`. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
+Zone target hue runs from `0` to `360` degrees (`360` equals `0`) and zone `saturation` from `0` to `1`. `balance` runs from `-1` toward shadows to `+1` toward highlights. `blending` runs from `0` to `1`.
+
+## Hue coordinates and swatches
+
+All angles are degrees. Coordinate-specific fields are additive extensions of recipe schema `1`; the batch manifest also remains version `1`.
+
+| Control | Pixel selection | Adjustment in `legacy` | Adjustment in `perceptual` |
+|---|---|---|---|
+| `hsl.<range>` | HSV hue on clipped stage-input sRGB; saturation gates near-neutral pixels | `hue_shift_hsv`: weighted HSV rotation | `hue_shift_oklch`: weighted OKLCh rotation |
+| `color_grading.<zone>` | Encoded-sRGB luminance weights in legacy; OKLab lightness weights in perceptual | `target_hue_hsv`: HSV-derived tint direction | `target_hue_oklch`: OKLab a/b vector direction |
+| Color mask `hue`, `width` | HSV hue and saturation on clipped input to the local item | Selection only | Selection only |
+
+HSL range centers are always HSV: red `0`, orange `30`, yellow `60`, green `120`, aqua `180`, blue `240`, purple `275`, magenta `315`. The circular weighting has a default `32°` width, with overlapping neighboring ranges. Weights are measured once from the input to the HSL stage, after preceding tone/color controls, not necessarily from the original photograph. Each shift is multiplied by its range weight and saturation gate; contributions are summed and the final shift is clamped to ±90°. Positive values increase the angle in the **adjustment** coordinate, negative values decrease it. A shift of `30` is not a destination hue of `30`.
+
+Three-way target hue specifies the direction of added color, not a replacement hue for every affected pixel. Perceptual grading adds an a/b vector to the existing OKLab color while retaining lightness; source color and zone strength determine the resulting hue. Zero zone saturation is neutral regardless of target hue.
+
+For new recipes, write the explicit field for the selected rendering mode:
+
+```json
+"color_management": {"rendering": "perceptual", "gamut_mapping": "oklch_compress"},
+"hsl": {"yellow": {"hue_shift_oklch": 20}},
+"color_grading": {"shadows": {"target_hue_oklch": 250, "saturation": 0.15}}
+```
+
+Each HSL range or grading zone accepts exactly one hue field. Mode-mismatched fields and multiple hue fields are validation errors, including when one value is zero. The historical `hue` field is still accepted: it means HSV shift/target in legacy and OKLCh shift/target in perceptual. Its defaults and rendering meaning are unchanged. Expanded recipes retain the supplied hue field, so loading and saving explicit recipes retains coordinate validation. To rename an old field, copy its number to the corresponding explicit field **while retaining the rendering mode**. Changing rendering mode changes the color operation.
+
+HSV-specific fields operate in legacy rendering; they do not provide HSV input conversion for perceptual rendering. To choose an OKLCh target from a concrete sRGB color, convert that color using `srgb_to_oklab` then `oklab_to_oklch` and read its hue. HSV hue alone does not specify the color for this conversion: saturation and value also matter, and neutral colors have no useful hue. A fixed angle offset cannot represent the relationship. Converting a target color does not convert a hue shift; shifts depend on each pixel's initial color and selection weight.
+
+![HSV and OKLCh hue bands, with actual HSL shift examples](hue-coordinates.png)
+
+The upper bands compare identical numerical angles at HSV `S=.75, V=.8` and OKLCh `L=.7, C=.1`. They represent coordinate directions, not expected final grading colors. The lower rows show actual HSL output for ±30° shifts: each column starts at its named HSV range center with `S=.6, V=.7`, and activates only that range. Perceptual examples use OKLCh gamut compression; legacy examples use output clipping. Source saturation ensures the gate is fully active. Gamut mapping and source L/C affect visible results; the swatches illustrate coordinate semantics rather than prescribe a palette. Rebuild with `python scripts/hue_reference.py`.
+
+For a numerical anchor, pure sRGB red, yellow, green, cyan, blue, and magenta have HSV angles `0, 60, 120, 180, 240, 300`, but approximately OKLCh angles `29.2, 109.8, 142.5, 194.8, 264.1, 328.4` respectively. These are conversions of those specific colors. Inspect the encoded photo after selecting or refining hue values; equal angle changes across coordinates do not imply equal visual changes.
 
 ## Local masks
 

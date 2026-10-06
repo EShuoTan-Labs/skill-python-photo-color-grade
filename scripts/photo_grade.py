@@ -103,6 +103,24 @@ OKLAB_TO_LMS_CUBERT = np.linalg.inv(LMS_CUBERT_TO_OKLAB)
 LMS_TO_XYZ = np.linalg.inv(XYZ_TO_LMS)
 
 
+def resolve_hue_control(
+    values: dict[str, Any], label: str, rendering: str, kind: str,
+) -> tuple[str, float]:
+    """Resolve a mode-specific degree control without changing historical hue values."""
+    fields = {"hue", f"{kind}_hsv", f"{kind}_oklch"}
+    supplied = fields & values.keys()
+    if len(supplied) > 1:
+        raise ValueError(f"{label} accepts only one hue control: {sorted(fields)}")
+    field = next(iter(supplied), "hue")
+    coordinate = "oklch" if rendering == "perceptual" else "hsv"
+    if field != "hue" and field != f"{kind}_{coordinate}":
+        raise ValueError(f"{label}.{field} requires rendering "
+                         f"{'perceptual' if field.endswith('_oklch') else 'legacy'}; "
+                         f"use {kind}_{coordinate} for rendering {rendering}.")
+    low, high = (-90.0, 90.0) if kind == "hue_shift" else (0.0, 360.0)
+    return field, require_number(values.get(field, 0.0), f"{label}.{field}", low, high)
+
+
 def require_object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object.")
@@ -375,9 +393,9 @@ def parse_recipe(payload: Any) -> tuple[argparse.Namespace, dict[str, Any]]:
     expanded_hsl: dict[str, dict[str, float]] = {}
     for color in HUE_CENTERS:
         color_values = require_object(hsl.get(color, {}), f"recipe.parameters.hsl.{color}")
-        color_fields = {"hue", "saturation", "luminance"}
+        color_fields = {"hue", "hue_shift_hsv", "hue_shift_oklch", "saturation", "luminance"}
         reject_unknown_keys(color_values, color_fields, f"recipe.parameters.hsl.{color}")
-        hue = require_number(color_values.get("hue", 0.0), f"recipe.parameters.hsl.{color}.hue", -90.0, 90.0)
+        hue_field, hue = resolve_hue_control(color_values, f"recipe.parameters.hsl.{color}", rendering, "hue_shift")
         saturation = require_number(
             color_values.get("saturation", 0.0),
             f"recipe.parameters.hsl.{color}.saturation",
@@ -393,7 +411,7 @@ def parse_recipe(payload: Any) -> tuple[argparse.Namespace, dict[str, Any]]:
         normalized[f"{color}_hue"] = hue
         normalized[f"{color}_sat"] = saturation
         normalized[f"{color}_lum"] = luminance
-        expanded_hsl[color] = {"hue": hue, "saturation": saturation, "luminance": luminance}
+        expanded_hsl[color] = {hue_field: hue, "saturation": saturation, "luminance": luminance}
 
     grading_fields = {"shadows", "midtones", "highlights", "balance", "blending"}
     grading = require_object(parameters.get("color_grading", {}), "recipe.parameters.color_grading")
@@ -401,8 +419,8 @@ def parse_recipe(payload: Any) -> tuple[argparse.Namespace, dict[str, Any]]:
     expanded_grading: dict[str, Any] = {}
     for zone in ("shadows", "midtones", "highlights"):
         zone_values = require_object(grading.get(zone, {}), f"recipe.parameters.color_grading.{zone}")
-        reject_unknown_keys(zone_values, {"hue", "saturation"}, f"recipe.parameters.color_grading.{zone}")
-        hue = require_number(zone_values.get("hue", 0.0), f"recipe.parameters.color_grading.{zone}.hue", 0.0, 360.0)
+        reject_unknown_keys(zone_values, {"hue", "target_hue_hsv", "target_hue_oklch", "saturation"}, f"recipe.parameters.color_grading.{zone}")
+        hue_field, hue = resolve_hue_control(zone_values, f"recipe.parameters.color_grading.{zone}", rendering, "target_hue")
         saturation = require_number(
             zone_values.get("saturation", 0.0),
             f"recipe.parameters.color_grading.{zone}.saturation",
@@ -411,7 +429,7 @@ def parse_recipe(payload: Any) -> tuple[argparse.Namespace, dict[str, Any]]:
         )
         normalized[f"grade_{zone}_hue"] = hue
         normalized[f"grade_{zone}_sat"] = saturation
-        expanded_grading[zone] = {"hue": hue, "saturation": saturation}
+        expanded_grading[zone] = {hue_field: hue, "saturation": saturation}
     balance = require_number(grading.get("balance", 0.0), "recipe.parameters.color_grading.balance", -1.0, 1.0)
     blending = require_number(grading.get("blending", 0.5), "recipe.parameters.color_grading.blending", 0.0, 1.0)
     normalized["grading_balance"] = balance
